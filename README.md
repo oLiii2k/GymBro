@@ -24,8 +24,8 @@ Trainings-Log fürs Smartphone (Browser, kein Install). Design: Variante C (Hybr
 ## v2-Scope (freigegeben nach Tag 1, Reihenfolge fest)
 Status: Oliver hat nach dem ersten echten Trainingstag explizit entschieden, v2 jetzt zu starten statt auf 3 Tage zu warten — bewusste Abweichung von der ursprünglichen Regel, kein Versehen.
 
-1. **Übersicht + Tab-Leiste** — erledigt (Mockup `v2-uebersicht.html`): "Als Nächstes"-Karte mit einem Start-Knopf, Pläne A/B/C mit "Dran"-Markierung, letzte Einheiten als Historie (orange bei abgebrochen, z. B. `14/18 Sätze`). Tab-Leiste (56px, Icon+Wort) als Wrapper um `index.html` — "Heute" ist der bestehende Screen, kein Umbau.
-2. **Zusätzliche Pläne (gleichberechtigt zu A/B/C)** — erledigt (Mockup `v2-plaene.html`): A–E in einer Liste, gleicher Starten-Knopf, `+ Neuer Plan` gestrichelt darunter. Anlegen-Formular: Name + Auswahl aus bestehender Übungsbibliothek (keine neuen Übungen anlegen), Zielspanne vorbelegt aus letzter Historie der Übung. Braucht neue Tabelle `plans` (Übungs-IDs + Spannen) — Übungs-ID bleibt stabiler Schlüssel, damit Progression planübergreifend eine Historie bleibt.
+1. **Übersicht + Tab-Leiste** — **gebaut** (nach Beschreibung, Mockup war nicht im Repo; Mockup `v2-uebersicht.html`): "Als Nächstes"-Karte mit einem Start-Knopf, Pläne A/B/C mit "Dran"-Markierung, letzte Einheiten als Historie (orange bei abgebrochen, z. B. `14/18 Sätze`). Tab-Leiste (56px, Icon+Wort) als Wrapper um `index.html` — "Heute" ist der bestehende Screen, kein Umbau.
+2. **Zusätzliche Pläne (gleichberechtigt zu A/B/C)** — **gebaut** (nach Beschreibung; Mockup `v2-plaene.html`): A–E in einer Liste, gleicher Starten-Knopf, `+ Neuer Plan` gestrichelt darunter. Anlegen-Formular: Name + Auswahl aus bestehender Übungsbibliothek (keine neuen Übungen anlegen), Zielspanne vorbelegt aus letzter Historie der Übung. Braucht neue Tabelle `plans` (Übungs-IDs + Spannen) — Übungs-ID bleibt stabiler Schlüssel, damit Progression planübergreifend eine Historie bleibt.
 3. **Animationen für alle Übungen** (statt statischer Strichzeichnung) inkl. Link zur ausführlichen Erklärung — noch offen.
 4. **Fortschrittsseite** — bewusst zuletzt, weil sie von echten Mehrfach-Daten lebt (Gewicht/Wdh je Übung über die Zeit, Basis = bestätigte ✓-Sätze).
 
@@ -35,10 +35,11 @@ System-Regel über alle Screens: wo ein Wert aus Historie bekannt ist, wird er v
 ## Dateien
 - `index.html` — Shell + Styles, lädt tokens.css, config.js, plan.js, app.js
 - `tokens.css` — Farb-/Abstand-/Schrift-Tokens als Rollen (`--accent`, `--ok`, `--warn`, ...), Dark+Light
-- `plan.js` — Trainingsplan (Übungen, Spannen, Hinweise, Strichzeichnung). `id` je Übung nie umbenennen
-- `app.js` — Scan-Liste, Stepper, ✓ → Supabase, Vorbelegung, Tages-/Wochenvolumen, Magic-Link-Login
+- `plan.js` — Übungsbibliothek + fest hinterlegter Plan A + Strichzeichnungen. `id` je Übung nie umbenennen
+- `app.js` — Tabs (Übersicht/Heute/Pläne), Scan-Liste, Stepper, ✓ → Supabase, Vorbelegung, Pläne anlegen/löschen, Volumen, Magic-Link-Login
 - `config.js` — Supabase-URL + anon-Key (nur anon, nie service_role)
 - `supabase/schema.sql` — Tabelle `sets` + Row Level Security
+- `supabase/schema-v2.sql` — Migration v2: Tabelle `plans`, `sets.plan_id`, Eindeutigkeit je Plan (**nach schema.sql im SQL-Editor ausführen**)
 
 ## Stand Bau
 1. ~~Schema/RLS~~ — `supabase/schema.sql` liegt bereit, **muss noch im Supabase-Projekt ausgeführt werden**
@@ -49,3 +50,10 @@ System-Regel über alle Screens: wo ein Wert aus Historie bekannt ist, wird er v
 
 Volumen = Wdh × kg × Multiplikator (`pair` ×2 für zwei Hanteln, `sides` ×2 für beide Seiten).
 Lokal testen: `config.js` füllen, dann `npx serve .` (Magic Link braucht http(s), nicht file://).
+
+## v2-Bau: Entscheidungen
+- Plan A ist im Code fest (`sets.plan_id = 'A'`), weitere Pläne (max. A–E) liegen in `plans`; der Buchstabe ergibt sich aus der Reihenfolge.
+- "Dran" = Plan nach dem zuletzt trainierten (Rotation). Einheit = Datum + Plan; "abgebrochen" (orange) = vergangene Einheit mit weniger ✓-Sätzen als geplant, heutige unvollständige zeigt "läuft".
+- Vorbelegung und Plan-Vorschlag hängen an der Übungs-ID, nicht am Plan (planübergreifende Historie).
+- Plan anlegen: Zielspanne/Sätze/kg aus dem letzten Ist der Übung vorgeschlagen, erst mit "Plan speichern" gespeichert. Pläne lassen sich löschen; gespeicherte Sätze bleiben.
+- Offen: Punkt 3 (Animationen) und 4 (Fortschrittsseite).
