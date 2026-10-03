@@ -21,6 +21,17 @@ Trainings-Log fürs Smartphone (Browser, kein Install). Design: Variante C (Hybr
 - Eigenes Backend (bewusst gegen eigene API entschieden — Supabase reicht für 1 Tabelle)
 - Native App (Browser-first)
 
+## v2-Scope (freigegeben nach Tag 1, Reihenfolge fest)
+Status: Oliver hat nach dem ersten echten Trainingstag explizit entschieden, v2 jetzt zu starten statt auf 3 Tage zu warten — bewusste Abweichung von der ursprünglichen Regel, kein Versehen.
+
+1. **Übersicht + Tab-Leiste** — erledigt (Mockup `v2-uebersicht.html`): "Als Nächstes"-Karte mit einem Start-Knopf, Pläne A/B/C mit "Dran"-Markierung, letzte Einheiten als Historie (orange bei abgebrochen, z. B. `14/18 Sätze`). Tab-Leiste (56px, Icon+Wort) als Wrapper um `index.html` — "Heute" ist der bestehende Screen, kein Umbau.
+2. **Zusätzliche Pläne (gleichberechtigt zu A/B/C)** — erledigt (Mockup `v2-plaene.html`): A–E in einer Liste, gleicher Starten-Knopf, `+ Neuer Plan` gestrichelt darunter. Anlegen-Formular: Name + Auswahl aus bestehender Übungsbibliothek (keine neuen Übungen anlegen), Zielspanne vorbelegt aus letzter Historie der Übung. Braucht neue Tabelle `plans` (Übungs-IDs + Spannen) — Übungs-ID bleibt stabiler Schlüssel, damit Progression planübergreifend eine Historie bleibt.
+3. **Animationen für alle Übungen** (statt statischer Strichzeichnung) inkl. Link zur ausführlichen Erklärung — noch offen.
+4. **Fortschrittsseite** — bewusst zuletzt, weil sie von echten Mehrfach-Daten lebt (Gewicht/Wdh je Übung über die Zeit, Basis = bestätigte ✓-Sätze).
+
+Explizit nicht in diesem v2-Schnitt: freie/spontane Einheiten ohne Planvorlage, Überspringen/Ersetzen einzelner Übungen innerhalb eines Trainings (war Vorarbeit für eine Option, die Oliver nicht gewählt hat — "zusätzliche Pläne" statt "freie Einheit").
+System-Regel über alle Screens: wo ein Wert aus Historie bekannt ist, wird er vorgeschlagen statt leer gestartet — gespeichert wird ein Vorschlag erst nach Bestätigung (gilt für Satz-Vorbelegung, Zielspanne im neuen Plan, "Dran"-Empfehlung). Farbcode fix: Orange = weicht von Vorgabe ab, Grün = bestätigt, Blau = anfassbare Aktion.
+
 ## Dateien
 - `index.html` — Shell + Styles, lädt tokens.css, config.js, plan.js, app.js
 - `tokens.css` — Farb-/Abstand-/Schrift-Tokens als Rollen (`--accent`, `--ok`, `--warn`, ...), Dark+Light
