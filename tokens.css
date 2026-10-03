@@ -1,0 +1,95 @@
+/* ===========================================================
+   Trainings-App — Design-Token v1 (Variante C)
+   Eigene App. Rollen, keine Farbnamen. Dark ist Default.
+   Alle Textfarben >= 4.5:1 gegen ihre Fläche (geprüft).
+   =========================================================== */
+
+:root{
+  /* --- Abstandsskala: 4er-Raster, 6 Stufen. Kein Wert außerhalb. --- */
+  --s-1:4px;   /* Label zu Wert          */
+  --s-2:8px;   /* innerhalb einer Gruppe */
+  --s-3:12px;  /* Gruppe zu Gruppe       */
+  --s-4:16px;  /* Kartenpolsterung       */
+  --s-5:24px;  /* Block zu Block         */
+  --s-6:32px;  /* Abschnittswechsel      */
+
+  /* --- Radien --- */
+  --r-sm:10px;  /* Felder, Buttons, Chips */
+  --r-md:14px;  /* Karten                 */
+  --r-lg:24px;  /* App-Rahmen             */
+
+  /* --- Typo: 5 Grade, sonst nichts --- */
+  --t-title:19px/1.25 700;   /* Einheitstitel            */
+  --t-item:16px/1.25 650;    /* Übungsname               */
+  --t-num:17px/1.2 700;      /* Lastwert, tabular-nums   */
+  --t-body:14.5px/1.45 400;  /* Ausführungshinweise      */
+  --t-meta:13px/1.4 400;     /* Vorgabe, Datum, Hinweis  */
+  --t-label:11.5px/1.2 700;  /* Versalien-Label, 0.08em  */
+
+  /* --- Trefferflächen: Untergrenzen, nicht Vorschläge --- */
+  --hit-min:46px;   /* Stepper, Haken, alles im Satz   */
+  --hit-row:52px;   /* Listenzeile                     */
+  --hit-gap:8px;    /* Mindestabstand zweier Ziele     */
+  --slot-flag:28px; /* reserviert: Gelenk-Flag Post-MVP */
+
+  /* --- Bewegung --- */
+  --dur-fast:120ms; /* Zustandswechsel Chip/Haken */
+  --dur-med:300ms;  /* Fortschrittsbalken          */
+  --ease:cubic-bezier(.2,.8,.2,1);
+  --demo-loop:2.4s; /* Übungsloop = Tempo 2-1-2    */
+}
+
+/* ---------- DARK (Default) ---------- */
+:root, [data-theme="dark"]{
+  --bg:#0F1419;        /* App-Hintergrund                       */
+  --surface:#171C22;   /* Karte, Header, Fuß                    */
+  --surface-2:#1E242B; /* offene Zeile, Feldgrund, Stat-Kachel  */
+  --fg:#E8EDF2;        /* 14.6:1 — Namen, Werte                 */
+  --fg-muted:#94A3B0;  /*  6.6:1 — Vorgabe, Einheiten, Label    */
+  --line:#2A323B;      /* nur Trennung, nie Information         */
+  --line-strong:#38424D;/* Feldrahmen, muss man sehen           */
+  --accent:#5B9BFF;    /*  6.2:1 — Primäraktion, aktiver Satz   */
+  --on-accent:#06121F;  /* 6.8:1 auf --accent                   */
+  --ok:#35C26E;        /*  7.4:1 — erledigt, im Ziel            */
+  --ok-bg:#15301F;
+  --on-ok:#06240F;
+  --warn:#E6A552;      /*  8.1:1 — Abweichung, Rückstufung      */
+  --warn-bg:#2E2314;
+  --figure:#5B9BFF;    /* Strichzeichnung Hantel/Arme           */
+  --figure-body:#94A3B0;/* Rumpf, zurückgenommen                */
+  --shadow:none;       /* im Dunkeln trennt Fläche, nicht Schatten */
+}
+
+/* ---------- LIGHT (Sonne auf dem Display) ---------- */
+[data-theme="light"]{
+  --bg:#F2F4F7;
+  --surface:#FFFFFF;
+  --surface-2:#F7F9FC;
+  --fg:#111418;        /* 18.5:1 */
+  --fg-muted:#5B6672;  /*  5.9:1 */
+  --line:#E2E6EC;
+  --line-strong:#C8D0DA;
+  --accent:#1F6FEB;    /*  4.6:1 */
+  --on-accent:#FFFFFF;
+  --ok:#116B33;        /*  6.6:1 auf Weiß, 5.9:1 auf --ok-bg  */
+  --ok-bg:#E7F5ED;
+  --on-ok:#FFFFFF;
+  --warn:#B4540A;      /*  5.0:1 auf Weiß, 4.5:1 auf --warn-bg */
+  --warn-bg:#FDF2E6;
+  --figure:#1F6FEB;
+  --figure-body:#5B6672;
+  --shadow:0 1px 2px rgba(16,24,40,.06),0 8px 24px rgba(16,24,40,.07);
+}
+
+/* ---------- Fokus: eine Regel für alles ---------- */
+:where(button,[role="button"],a,input,[tabindex]):focus-visible{
+  outline:2px solid var(--accent);
+  outline-offset:2px;
+  border-radius:var(--r-sm);
+}
+
+/* ---------- Bewegung abschaltbar ---------- */
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.01ms !important;animation-iteration-count:1 !important;
+    transition-duration:.01ms !important}
+}

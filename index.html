@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="de" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trainings-App v1 — Variante C (Token-basiert)</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+       background:var(--bg);color:var(--fg);line-height:1.45;
+       display:flex;justify-content:center;padding:20px 12px 40px;min-height:100vh}
+  .phone{width:392px;background:var(--surface);border:1px solid var(--line);
+         border-radius:var(--r-lg);overflow:hidden;display:flex;flex-direction:column;box-shadow:var(--shadow)}
+  .themebtn{position:fixed;top:12px;right:16px;z-index:9;background:var(--surface);color:var(--fg);
+    border:1px solid var(--line-strong);border-radius:var(--r-sm);height:34px;padding:0 12px;
+    font-size:13px;font-weight:600;cursor:pointer}
+
+  header{padding:var(--s-4) var(--s-4) var(--s-3);border-bottom:1px solid var(--line)}
+  header h1{font:var(--t-title);letter-spacing:-.01em}
+  header .sub{font:var(--t-meta);color:var(--fg-muted);margin-top:var(--s-1)}
+  .bar{margin-top:var(--s-3);height:5px;border-radius:3px;background:var(--line);overflow:hidden}
+  .bar i{display:block;height:100%;width:33%;background:var(--ok);transition:width var(--dur-med) var(--ease)}
+
+  /* ---------- Scan-Ebene ---------- */
+  .row{border-bottom:1px solid var(--line);padding:var(--s-3) var(--s-4)}
+  .row.open{background:var(--surface-2)}
+  .head{display:grid;grid-template-columns:1fr auto var(--slot-flag);gap:var(--s-3);
+        align-items:center;min-height:var(--hit-row);cursor:pointer}
+  .rname{font:var(--t-item)}
+  .rmeta{font:var(--t-meta);color:var(--fg-muted);margin-top:2px}
+  .rload{font:var(--t-num);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+  .rload small{display:block;font-size:10.5px;font-weight:600;color:var(--fg-muted);letter-spacing:.04em}
+  .fslot{width:var(--slot-flag);height:var(--slot-flag)}         /* Post-MVP: Gelenk-Flag */
+  .flag{display:inline-block;font-size:11px;font-weight:700;padding:1px 6px;border-radius:999px;margin-left:6px;vertical-align:1px}
+  .flag.hold{background:var(--warn-bg);color:var(--warn)}
+  .flag.up{background:var(--ok-bg);color:var(--ok)}
+  .tick{font:var(--t-meta);font-weight:700;color:var(--ok);margin-top:3px;font-variant-numeric:tabular-nums}
+
+  .detail{display:none;padding-top:var(--s-3)}
+  .row.open .detail{display:block}
+
+  /* ---------- Bewegung: statische Zeichnung + Tempo ---------- */
+  .demo{display:grid;grid-template-columns:104px 1fr;gap:var(--s-3);align-items:center;
+        background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);
+        padding:var(--s-2);margin-bottom:var(--s-3)}
+  .stage{width:88px;height:88px;border-radius:var(--r-sm);background:var(--surface-2);display:block;cursor:zoom-in}
+  .demo .txt{font:var(--t-meta);color:var(--fg-muted)}
+  .demo .txt b{display:block;color:var(--fg);font-size:13px;font-weight:700;margin-bottom:2px}
+  .demo .ctrl{margin-top:var(--s-2)}
+  .demo .ctrl a{display:inline-flex;align-items:center;height:32px;padding:0 10px;border-radius:var(--r-sm);
+       border:1px solid var(--line-strong);color:var(--accent);font-size:12px;font-weight:700;text-decoration:none}
+  svg .fig{stroke:var(--figure);stroke-width:5;stroke-linecap:round;fill:none}
+  svg .body{stroke:var(--figure-body);stroke-width:5;stroke-linecap:round;fill:none}
+  svg .wt{fill:var(--figure)}
+  .big{position:fixed;inset:0;background:rgba(5,8,11,.86);display:none;place-items:center;z-index:20}
+  .big.on{display:grid}
+  .big svg{width:min(78vw,340px);height:auto;background:var(--surface);border-radius:18px;padding:12px}
+
+  h4{font:var(--t-label);letter-spacing:.08em;text-transform:uppercase;color:var(--fg-muted);
+     margin:var(--s-4) 0 var(--s-2)}
+  h4 em{font-style:normal;text-transform:none;letter-spacing:0;font-weight:600}
+  ol.hints{list-style:none;counter-reset:h}
+  ol.hints li{counter-increment:h;position:relative;padding-left:24px;font:var(--t-body);margin-bottom:6px}
+  ol.hints li::before{content:counter(h);position:absolute;left:0;top:2px;width:17px;height:17px;border-radius:50%;
+    background:var(--surface-2);border:1px solid var(--line-strong);color:var(--fg-muted);
+    font-size:10.5px;font-weight:700;display:grid;place-items:center}
+
+  /* ---------- Satz-Eingabe ---------- */
+  .setrow{display:grid;grid-template-columns:22px 1fr 1fr var(--hit-min);
+          gap:var(--hit-gap);align-items:center;margin-bottom:var(--s-2)}
+  .setno{font:var(--t-meta);font-weight:700;color:var(--fg-muted);text-align:center}
+  .field{display:flex;align-items:center;border:1px solid var(--line-strong);border-radius:var(--r-sm);
+         background:var(--surface);height:var(--hit-min);overflow:hidden}
+  .field button{width:36px;height:100%;background:none;border:none;color:var(--fg-muted);
+                font-size:19px;cursor:pointer;flex:none}
+  .field button:active{background:var(--surface-2);color:var(--fg)}
+  .field .val{flex:1;text-align:right;font-variant-numeric:tabular-nums;font-size:15px;font-weight:700;
+              transition:color var(--dur-fast) var(--ease)}
+  .field .unit{font-size:11px;color:var(--fg-muted);font-weight:600;padding:0 6px 0 4px}
+  .field.devmark{border-color:var(--warn)}
+  .field.devmark .val{color:var(--warn)}
+  .done{width:var(--hit-min);height:var(--hit-min);border-radius:var(--r-sm);border:1px solid var(--line-strong);
+        background:var(--surface);color:var(--fg-muted);font-size:18px;cursor:pointer;
+        transition:background var(--dur-fast) var(--ease)}
+  .setrow.ok .done{background:var(--ok);border-color:var(--ok);color:var(--on-ok)}
+  .hintline{font:var(--t-meta);color:var(--fg-muted);margin-top:var(--s-1)}
+  .hintline b{color:var(--fg)}
+  .allbtn{width:100%;min-height:var(--hit-min);margin-top:var(--s-2);border-radius:var(--r-md);
+    border:1px solid var(--accent);background:transparent;color:var(--accent);font-size:15px;font-weight:700;cursor:pointer}
+  .note{margin-top:var(--s-3);font:var(--t-meta);color:var(--warn);background:var(--warn-bg);
+        border-radius:var(--r-sm);padding:var(--s-2) var(--s-3)}
+  .logline{margin-top:var(--s-3);font-family:ui-monospace,Consolas,monospace;font-size:11.5px;
+    color:var(--fg-muted);background:var(--surface);border:1px dashed var(--line-strong);
+    border-radius:var(--r-sm);padding:var(--s-2) var(--s-3);word-break:break-word}
+
+  .foot{margin-top:auto;border-top:1px solid var(--line);padding:var(--s-3) var(--s-4) var(--s-4)}
+  .sum{display:flex;justify-content:space-between;font:var(--t-meta);color:var(--fg-muted)}
+  .sum b{color:var(--fg);font-size:15px;font-variant-numeric:tabular-nums}
+  .save{margin-top:var(--s-3);width:100%;height:50px;border:none;border-radius:var(--r-md);
+        background:var(--accent);color:var(--on-accent);font-size:16px;font-weight:700;cursor:pointer}
+</style>
+</head>
+<body>
+<button class="themebtn" id="t">☀ Hell</button>
+
+<div class="phone">
+  <header>
+    <h1>Training A — Oberkörper</h1>
+    <div class="sub">Sa 03.10. · 6 Übungen · 2 / 6 erledigt</div>
+    <div class="bar"><i id="bar"></i></div>
+  </header>
+
+  <div class="list">
+    <div class="row">
+      <div class="head" onclick="tog(this)">
+        <div><div class="rname">KH-Bankdrücken flach</div><div class="rmeta">3 × 6–10 · Brust</div>
+             <div class="tick">✓ 2×17 kg · 10 / 10 / 8</div></div>
+        <div class="rload">2×17<small>KG</small></div><div class="fslot"></div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="head" onclick="tog(this)">
+        <div><div class="rname">Einarmiges KH-Rudern</div><div class="rmeta">3 × 6–10 / Seite · Rücken</div>
+             <div class="tick">✓ 17 kg · 10 / 10 / 10</div></div>
+        <div class="rload">17<small>KG</small></div><div class="fslot"></div>
+      </div>
+    </div>
+
+    <div class="row open">
+      <div class="head" onclick="tog(this)">
+        <div><div class="rname">KH-Schulterdrücken sitzend<span class="flag hold">halten</span></div>
+             <div class="rmeta">3 × 8–10 · Schulter · läuft</div></div>
+        <div class="rload">2×12<small>KG</small></div><div class="fslot"></div>
+      </div>
+
+      <div class="detail">
+        <div class="demo">
+          <svg class="stage" viewBox="0 0 104 104" onclick="zoom()">
+            <g class="body">
+              <circle cx="52" cy="26" r="8"/>
+              <path d="M52 34 V60"/>
+              <path d="M52 60 L42 86 M52 60 L62 86"/>
+            </g>
+            <g><path class="fig" d="M52 46 L36 38 L36 22"/><rect class="wt" x="28" y="16" width="16" height="7" rx="3"/></g>
+            <g><path class="fig" d="M52 46 L68 38 L68 22"/><rect class="wt" x="60" y="16" width="16" height="7" rx="3"/></g>
+          </svg>
+          <div class="txt">
+            <b>Endposition · Tempo 2-1-2</b>
+            Hoch 2 s, oben 1 s, runter 2 s. Tippen = groß.
+            <div class="ctrl"><a href="https://modusx.de/fitness-uebungen/" target="_blank" onclick="event.stopPropagation()">Erklärung ↗</a></div>
+          </div>
+        </div>
+
+        <h4>Ausführung</h4>
+        <ol class="hints">
+          <li>Aufrecht sitzen, Lehne im Rücken, Füße fest am Boden.</li>
+          <li>Neutraler Griff, Hanteln auf Schulterhöhe starten.</li>
+          <li>Drücken, ohne die Schulter hochzuziehen.</li>
+          <li>Ziehen oder Einklemmen beendet den Satz — nicht die Wiederholung.</li>
+        </ol>
+
+        <h4>Sätze eintragen · <em>Ziel 3 × 8–10 @ 2×12 kg</em></h4>
+        <div class="setrow" data-w="10" data-kg="12">
+          <div class="setno">1</div>
+          <div class="field"><button data-d="-1" data-f="w">−</button><span class="val vw">10</span><span class="unit">Wdh</span><button data-d="1" data-f="w">+</button></div>
+          <div class="field"><button data-d="-1" data-f="kg">−</button><span class="val vkg">12</span><span class="unit">kg</span><button data-d="1" data-f="kg">+</button></div>
+          <button class="done">✓</button>
+        </div>
+        <div class="setrow" data-w="9" data-kg="12">
+          <div class="setno">2</div>
+          <div class="field"><button data-d="-1" data-f="w">−</button><span class="val vw">9</span><span class="unit">Wdh</span><button data-d="1" data-f="w">+</button></div>
+          <div class="field"><button data-d="-1" data-f="kg">−</button><span class="val vkg">12</span><span class="unit">kg</span><button data-d="1" data-f="kg">+</button></div>
+          <button class="done">✓</button>
+        </div>
+        <div class="setrow" data-w="6" data-kg="12">
+          <div class="setno">3</div>
+          <div class="field"><button data-d="-1" data-f="w">−</button><span class="val vw">6</span><span class="unit">Wdh</span><button data-d="1" data-f="w">+</button></div>
+          <div class="field"><button data-d="-1" data-f="kg">−</button><span class="val vkg">12</span><span class="unit">kg</span><button data-d="1" data-f="kg">+</button></div>
+          <button class="done">✓</button>
+        </div>
+        <div class="hintline">Vorbelegt mit dem <b>letzten Ist</b> (30.09.: 10 / 9 / 6). Orange = außerhalb der Plan-Spanne — markiert, nicht bewertet.</div>
+        <button class="allbtn" id="all">Alle 3 wie geplant ✓ &nbsp;8–10 @ 2×12 kg</button>
+
+        <div class="note"><b>Nicht steigern.</b> Rückstufung von 2×14 kg wegen Schultergefühl. Erst nach zwei vollständigen Einheiten ohne Auffälligkeit wieder hoch.</div>
+        <div class="logline" id="log">03.10.2026 | A | Schulterdrücken: 2×12 kg × –/–/–</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="head" onclick="tog(this)">
+        <div><div class="rname">KH-Seitheben sitzend<span class="flag hold">halten</span></div><div class="rmeta">3 × 10–15 · Schulter seitlich</div></div>
+        <div class="rload">2×4<small>KG</small></div><div class="fslot"></div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="head" onclick="tog(this)">
+        <div><div class="rname">Preacher-Curl einarmig</div><div class="rmeta">3 × 8–10 / Arm · Bizeps</div></div>
+        <div class="rload">8<small>KG</small></div><div class="fslot"></div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="head" onclick="tog(this)">
+        <div><div class="rname">Überkopf-Trizepsstrecken<span class="flag up">+2</span></div><div class="rmeta">3 × 8–10 · Trizeps</div></div>
+        <div class="rload">12<small>KG</small></div><div class="fslot"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div class="sum"><span>Heute bewegt</span><b id="vol">2.610 kg</b></div>
+    <div class="sum" style="margin-top:3px"><span>Woche (KW 40)</span><b>11.240 kg</b></div>
+    <button class="save">Einheit abschließen</button>
+  </div>
+</div>
+
+<div class="big" id="big" onclick="this.classList.remove('on')">
+  <svg viewBox="0 0 104 104">
+    <g class="body"><circle cx="52" cy="26" r="8"/><path d="M52 34 V60"/><path d="M52 60 L42 86 M52 60 L62 86"/></g>
+    <g><path class="fig" d="M52 46 L36 38 L36 22"/><rect class="wt" x="28" y="16" width="16" height="7" rx="3"/></g>
+    <g><path class="fig" d="M52 46 L68 38 L68 22"/><rect class="wt" x="60" y="16" width="16" height="7" rx="3"/></g>
+  </svg>
+</div>
+
+<script>
+const PLAN={wMin:8,wMax:10,kg:12};        // Plan-Spanne = Vergleichslinie
+const t=document.getElementById('t'),h=document.documentElement;
+t.onclick=()=>{const d=h.dataset.theme==='dark';h.dataset.theme=d?'light':'dark';t.textContent=d?'🌙 Dunkel':'☀ Hell';};
+function tog(head){const r=head.closest('.row');
+  document.querySelectorAll('.row').forEach(x=>{if(x!==r)x.classList.remove('open')});r.classList.toggle('open');}
+function zoom(){document.getElementById('big').classList.add('on');}
+
+function render(r){
+  const w=+r.dataset.w,kg=+r.dataset.kg;
+  r.querySelector('.vw').textContent=w;r.querySelector('.vkg').textContent=kg;
+  r.querySelectorAll('.field')[0].classList.toggle('devmark',w<PLAN.wMin||w>PLAN.wMax);
+  r.querySelectorAll('.field')[1].classList.toggle('devmark',kg!==PLAN.kg);
+  log();
+}
+function log(){
+  const rows=[...document.querySelectorAll('.setrow')];
+  const reps=rows.map(r=>r.classList.contains('ok')?r.dataset.w:'–');
+  const kgs=rows.filter(r=>r.classList.contains('ok')).map(r=>r.dataset.kg);
+  const kg=kgs.length?[...new Set(kgs)].join('/'):PLAN.kg;
+  document.getElementById('log').textContent=`03.10.2026 | A | Schulterdrücken: 2×${kg} kg × ${reps.join('/')}`;
+  const done=rows.filter(r=>r.classList.contains('ok')).length;
+  document.getElementById('bar').style.width=(33+done*5.5)+'%';
+  document.getElementById('vol').textContent=(2610+done*240).toLocaleString('de-DE')+' kg';
+}
+document.querySelectorAll('.setrow').forEach(r=>{
+  r.querySelectorAll('.field button').forEach(b=>b.onclick=()=>{
+    const f=b.dataset.f,d=+b.dataset.d;
+    r.dataset[f]=Math.max(0,(+r.dataset[f])+(f==='kg'?d*2:d));render(r);});
+  r.querySelector('.done').onclick=()=>{r.classList.toggle('ok');log();};
+  render(r);
+});
+document.getElementById('all').onclick=()=>{
+  document.querySelectorAll('.setrow').forEach(r=>{r.dataset.w=PLAN.wMax;r.dataset.kg=PLAN.kg;r.classList.add('ok');render(r);});};
+log();
+</script>
+</body>
+</html>
