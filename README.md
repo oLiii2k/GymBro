@@ -22,12 +22,19 @@ Trainings-Log fürs Smartphone (Browser, kein Install). Design: Variante C (Hybr
 - Native App (Browser-first)
 
 ## Dateien
-- `index.html` — v1-Mockup/Grundgerüst (statisch, lädt tokens.css)
+- `index.html` — Shell + Styles, lädt tokens.css, config.js, plan.js, app.js
 - `tokens.css` — Farb-/Abstand-/Schrift-Tokens als Rollen (`--accent`, `--ok`, `--warn`, ...), Dark+Light
+- `plan.js` — Trainingsplan (Übungen, Spannen, Hinweise, Strichzeichnung). `id` je Übung nie umbenennen
+- `app.js` — Scan-Liste, Stepper, ✓ → Supabase, Vorbelegung, Tages-/Wochenvolumen, Magic-Link-Login
+- `config.js` — Supabase-URL + anon-Key (nur anon, nie service_role)
+- `supabase/schema.sql` — Tabelle `sets` + Row Level Security
 
-## Nächste Schritte (Bau, nicht Design)
-1. Supabase-Projekt anlegen, Tabelle `sets` (date, exercise, set_index, reps, weight, done_at), RLS aktivieren
-2. Auth (Magic Link oder simples Email/Passwort) einbauen, kein Service-Key im Client
-3. `index.html` an echte Daten anschließen: Scan-Liste aus Supabase laden, Stepper schreiben auf ✓
-4. Vorbelegung aus letztem Datensatz pro Übung ziehen, Spannenvergleich + Orange-Markierung verdrahten
-5. Auf dem eigenen Handy im Browser testen — drei echte Trainingstage, bevor irgendwas Neues reinkommt
+## Stand Bau
+1. ~~Schema/RLS~~ — `supabase/schema.sql` liegt bereit, **muss noch im Supabase-Projekt ausgeführt werden**
+2. ~~Auth~~ — Magic Link im Client; im Supabase-Dashboard unter Auth → URL Configuration die Seiten-URL als Redirect eintragen
+3. ~~Daten anschließen~~ — Laden, Schreiben auf ✓, Rollback bei Fehler
+4. ~~Vorbelegung + Spannenvergleich~~ — letzter Trainingstag je Übung; orange außerhalb der Plan-Spanne
+5. **Offen (manuell):** Supabase-Projekt anlegen, `config.js` füllen, Seite hosten (z. B. GitHub Pages), drei echte Trainingstage auf dem Handy testen
+
+Volumen = Wdh × kg × Multiplikator (`pair` ×2 für zwei Hanteln, `sides` ×2 für beide Seiten).
+Lokal testen: `config.js` füllen, dann `npx serve .` (Magic Link braucht http(s), nicht file://).
