@@ -19,7 +19,22 @@ window.GYMBRO_LIBRARY = [
     muscle: "Schulter seitlich", flag: { kind: "hold", text: "halten" } },
   { id: "preacher-curl", name: "Preacher-Curl einarmig", sets: 3, wMin: 8, wMax: 10, kg: 8, sides: true, muscle: "Bizeps" },
   { id: "ueberkopf-trizeps", name: "Überkopf-Trizepsstrecken", sets: 3, wMin: 8, wMax: 10, kg: 12,
-    muscle: "Trizeps", flag: { kind: "up", text: "+2" } }
+    muscle: "Trizeps", flag: { kind: "up", text: "+2" } },
+  { id: "kh-schraegbankdruecken", name: "KH-Schrägbankdrücken, niedrige Neigung", sets: 3, wMin: 6, wMax: 10, kg: 15,
+    pair: true, muscle: "Brust oben", note: "Ist die Bank nicht sicher niedrig einstellbar: flaches KH-Bankdrücken." },
+  { id: "aufstehen-bank", name: "Kontrolliertes Aufstehen zur Bank", sets: 3, wMin: 8, wMax: 12, kg: 10,
+    muscle: "Beine · Knie", note: "<b>Ziel 3×12 bei 10 kg</b>, Last steigt nur, wenn das Knie im Training <i>und</i> am Folgetag ruhig war. Nur so tief, wie beide Knie ruhig bleiben." },
+  { id: "rdl-langhantel", name: "Rumänisches Kreuzheben (Langhantel)", sets: 3, wMin: 8, wMax: 10, kg: 47.5,
+    muscle: "Hüfte · Rückseite", flag: { kind: "up", text: "+2,5" } },
+  { id: "dead-bug", name: "Dead Bug", sets: 3, wMin: 6, wMax: 10, kg: 0, sides: true,
+    muscle: "Core", note: "Körpergewicht. Sauber vor schnell — Lendenwirbelsäule bleibt am Boden." },
+  { id: "glute-bridge", name: "Glute Bridge beidbeinig am Boden", sets: 3, wMin: 8, wMax: 12, kg: 14,
+    muscle: "Gesäß", flag: { kind: "up", text: "+4" }, note: "KH gepolstert über der Hüfte." },
+  { id: "wadenheben", name: "Wadenheben beidbeinig mit Handstütze", sets: 3, wMin: 10, wMax: 15, kg: 14,
+    muscle: "Waden", flag: { kind: "up", text: "+4" }, note: "KH in der freien Hand." }
+  // "plank" (Unterarmstütz) bewusst NICHT hier: wird in Sekunden gemessen, nicht Wdh. Braucht
+  // erst ein `unit:"s"`-Feld in app.js (Stepper + Volumen), siehe README v2-Scope. Bis dahin
+  // fehlt Plank in Plan B — besser fehlend als falsch als "30 Wdh @ 0 kg".
 ];
 
 // Plan A: im Code fest (id "A" in sets.plan_id). Weitere Pläne liegen in der Tabelle `plans`.
