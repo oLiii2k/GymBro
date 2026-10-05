@@ -57,3 +57,9 @@ Lokal testen: `config.js` füllen, dann `npx serve .` (Magic Link braucht http(s
 - Vorbelegung und Plan-Vorschlag hängen an der Übungs-ID, nicht am Plan (planübergreifende Historie).
 - Plan anlegen: Zielspanne/Sätze/kg aus dem letzten Ist der Übung vorgeschlagen, erst mit "Plan speichern" gespeichert. Pläne lassen sich löschen; gespeicherte Sätze bleiben.
 - Offen: Punkt 3 (Animationen) und 4 (Fortschrittsseite).
+
+## v3-Scope (Entscheidung 2026-10-03)
+1. **Plan-Editor** — EIN Formular für Anlegen und Bearbeiten (nicht zwei getrennte Screens, sonst laufen sie auseinander). Angehakte Übungen wandern in einen eigenen Block "Deine Reihenfolge 1–6" mit ↑↓ pro Zeile (Pfeiltasten, kein Drag-and-drop als Hauptweg — auf dem Handy mit schwitzigen Fingern unzuverlässig); darunter die restliche Bibliothek zum Hinzufügen. Bearbeitbar: Name, Übungsauswahl, Reihenfolge, Sätze, Wdh-Spanne/Sekunden, Zielgewicht. Änderungen gelten nur für künftige Einheiten, bereits absolvierte Trainings bleiben unverändert.
+2. **E-Mail + Passwort-Login** (zusätzlich zu Magic Link, gleiches Konto, keine neue Registrierung, keine Historie verloren), inkl. "Passwort vergessen". Oliver nutzt weiter seine bestehende E-Mail als Login, kein freier Benutzername.
+
+Zurückgestellt (bewusst nicht in v3): Punkt 3 (Animationen) und 4 (Fortschrittsseite) aus v2 sind noch offen und haben Vorrang vor v3, falls Zeit knapp wird.
