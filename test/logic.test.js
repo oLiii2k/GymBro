@@ -98,3 +98,28 @@ test("dranIndex: gelöschter/unbekannter Plan faellt auf Plan[0] zurueck", () =>
 test("dranIndex: keine Plaene -> -1", () => {
   assert.equal(L.dranIndex([], []), -1);
 });
+
+// ---- Session-Zählung über Pläne hinweg (schema: sets.date + sets.plan_id, Session-Begriff ist planübergreifend) ----
+test("sessionsFromRows: gleicher Tag, ZWEI verschiedene Pläne (gleiche Übung) -> trotzdem genau 1 Session, nicht 2", () => {
+  // Schema trägt date UND plan_id je Satz (siehe supabase/schema-v2.sql), aber die Fortschritts-Regel ist bewusst
+  // planübergreifend: eine "Einheit" dieser Übung ist durch das DATUM definiert, nicht durch Datum+Plan. Würde man
+  // stattdessen nach Datum+Plan gruppieren, zählte derselbe Trainingstag fälschlich als zwei separate Fortschritts-
+  // Einträge, nur weil zufällig zwei Pläne am selben Tag dieselbe Übung enthielten.
+  const rows = [
+    { date: "2026-10-01", plan_id: "A", exercise: "rdl-langhantel", set_index: 1, reps: 8, weight: 47.5 },
+    { date: "2026-10-01", plan_id: "C", exercise: "rdl-langhantel", set_index: 1, reps: 9, weight: 47.5 }
+  ];
+  const r = L.sessionsFromRows(rows, "rdl-langhantel");
+  assert.equal(r.count, 1, "Datum+Plan sind zwei verschiedene Zeilen, aber EINE echte Trainings-Session (ein Tag)");
+  assert.equal(r.sessions[0].sets.length, 2, "beide Sätze (aus beiden Plänen) müssen trotzdem in der einen Session auftauchen");
+});
+
+test("sessionsFromRows: zwei ECHTE Sessions an verschiedenen Tagen, je anderer Plan -> count 2 (Plan-Wechsel täuscht keine extra/fehlende Session vor)", () => {
+  const rows = [
+    { date: "2026-10-01", plan_id: "A", exercise: "rdl-langhantel", set_index: 1, reps: 8, weight: 47.5 },
+    { date: "2026-10-08", plan_id: "C", exercise: "rdl-langhantel", set_index: 1, reps: 9, weight: 47.5 }
+  ];
+  const r = L.sessionsFromRows(rows, "rdl-langhantel");
+  assert.equal(r.count, 2);
+  assert.deepEqual(r.sessions.map((s) => s.date), ["2026-10-01", "2026-10-08"]);
+});

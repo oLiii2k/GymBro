@@ -204,3 +204,68 @@ test("Mehrbenutzer: Mock erzwingt Zeilen-Isolation wie RLS — Plan-Insert eines
   assert.ok(oliverPlans.includes("Oliver-only Plan"));
   assert.ok(!neuPlans.includes("Oliver-only Plan"), "Insert darf niemals im Datensatz eines anderen Kontos landen");
 });
+
+test("Mehrbenutzer: verzögerte Satz-Schreibantwort, die erst NACH Kontowechsel ankommt, darf nicht mehr fürs alte Konto rendern/toasten (Generation-Guard)", async () => {
+  const { window, document } = await bootApp();
+  await loginAs(window, "oliver@test.invalid", "correct-horse-1");
+  window.__GYMBRO_TEST__.start("A"); // Builtin-Plan A enthält kh-bankdruecken
+  await settle(window);
+  click(document.querySelector('[data-ex="kh-bankdruecken"] .head'));
+  await settle(window);
+
+  // Schreibantwort gezielt anhalten UND als Fehler markieren, damit der Fehlerpfad (Rollback+Toast) beobachtbar wäre,
+  // WENN der Generation-Guard fehlte.
+  const release = window.__TEST_SB__.__test.gateWrites();
+  window.__TEST_SB__.__test.forceNextWriteError("verzögerter Fehler vom alten Konto");
+  click(document.querySelector('[data-ex="kh-bankdruecken"] .setrow .done'));
+  await settle(window); // optimistisches ✓ ist jetzt sichtbar, die Schreibantwort selbst hängt noch im Gate
+
+  await window.__TEST_SB__.auth.signOut(); // Kontowechsel WÄHREND die alte Schreibantwort noch unterwegs ist
+  await wait(() => document.querySelector("#lf"));
+  await settle(window);
+
+  release(); // jetzt erst löst die (fehlgeschlagene) Schreibantwort des ALTEN Kontos auf
+  await settle(window);
+
+  assert.ok(document.querySelector("#lf"), "Muss weiterhin auf dem Login-Screen bleiben, nicht durch die späte Antwort zurückgerissen werden");
+  assert.ok(!document.body.textContent.includes("verzögerter Fehler vom alten Konto"),
+    "Die verspätete Fehlerantwort des vorherigen Kontos darf keinen Toast mehr auslösen, nachdem abgemeldet wurde");
+});
+
+// ---------- Unbekannte/kaputte Plan-Daten ----------
+test("Plan-Daten: unbekannte Übungs-ID in plans.exercises wird still gefiltert (kein Crash, Rest des Plans bleibt nutzbar)", async () => {
+  const seed = {
+    "oliver@test.invalid": {
+      userId: "user-oliver", password: "correct-horse-1",
+      plans: [{ name: "Kaputter Plan", exercises: [{ id: "kh-bankdruecken" }, { id: "GELOESCHTE-UEBUNG-XY" }] }],
+      sets: []
+    }
+  };
+  const { window, document } = await bootApp(seed);
+  await loginAs(window, "oliver@test.invalid", "correct-horse-1");
+  window.__GYMBRO_TEST__.go("plaene");
+  await settle(window);
+  assert.ok(document.body.textContent.includes("Kaputter Plan"), "Plan mit teils unbekannter Übung muss trotzdem laden/erscheinen");
+  const broken = window.__GYMBRO_TEST__.get().data.plans.find((p) => p.name === "Kaputter Plan");
+  assert.ok(broken, "Plan muss im geladenen State auffindbar sein");
+  window.__GYMBRO_TEST__.start(broken.id);
+  await settle(window);
+  assert.ok(document.querySelector('[data-ex="kh-bankdruecken"]'), "bekannte Übung bleibt im Plan");
+  assert.ok(!document.querySelector('[data-ex="GELOESCHTE-UEBUNG-XY"]'), "unbekannte Übungs-ID darf nicht gerendert werden");
+});
+
+test("Plan-Daten: exercises fehlt/ist kein Array (kaputte DB-Zeile) -> leerer, aber ladbarer Plan statt App-Crash", async () => {
+  const seed = {
+    "oliver@test.invalid": {
+      userId: "user-oliver", password: "correct-horse-1",
+      plans: [{ name: "Ohne Uebungsfeld", exercises: null }],
+      sets: []
+    }
+  };
+  const { window, document } = await bootApp(seed);
+  await loginAs(window, "oliver@test.invalid", "correct-horse-1"); // darf NICHT werfen/hängen bleiben
+  window.__GYMBRO_TEST__.go("plaene");
+  await settle(window);
+  assert.ok(document.body.textContent.includes("Ohne Uebungsfeld"), "Plan mit kaputtem exercises-Feld muss trotzdem in der Liste erscheinen (0 Übungen statt Crash)");
+  assert.ok(document.body.textContent.includes("0 Übungen"), "Muss als 0-Übungen-Plan angezeigt werden, nicht die ganze Ladung zum Absturz bringen");
+});

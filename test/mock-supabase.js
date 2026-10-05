@@ -86,9 +86,12 @@
         const delApi = {
           eq(col, val) { delState.filters.push(["eq", col, val]); return delApi; },
           then(resolve) {
-            const a = accountForSession();
-            if (a) { if (table === "plans") a.plans = a.plans.filter((p) => !matchesFilters(p, delState.filters)); else a.sets = a.sets.filter((r) => !matchesFilters(r, delState.filters)); }
-            return resolve({ data: null, error: null });
+            const doDelete = () => {
+              const a = accountForSession();
+              if (a) { if (table === "plans") a.plans = a.plans.filter((p) => !matchesFilters(p, delState.filters)); else a.sets = a.sets.filter((r) => !matchesFilters(r, delState.filters)); }
+              return { data: null, error: null };
+            };
+            return (table === "sets" ? throughGate(doDelete) : Promise.resolve(doDelete())).then(resolve);
           }
         };
         return delApi;
@@ -96,22 +99,46 @@
       api.upsert = (row) => {
         const a = accountForSession();
         if (!a) return Promise.resolve({ data: null, error: { message: "not authenticated" } });
-        const idx = a.sets.findIndex((r) => r.date === row.date && r.plan_id === row.plan_id && r.exercise === row.exercise && r.set_index === row.set_index);
-        const rec = { ...row, user_id: a.userId };
-        if (idx >= 0) a.sets[idx] = { ...a.sets[idx], ...rec }; else a.sets.push(rec);
-        return Promise.resolve({ data: null, error: null });
+        const doUpsert = () => {
+          const idx = a.sets.findIndex((r) => r.date === row.date && r.plan_id === row.plan_id && r.exercise === row.exercise && r.set_index === row.set_index);
+          const rec = { ...row, user_id: a.userId };
+          if (idx >= 0) a.sets[idx] = { ...a.sets[idx], ...rec }; else a.sets.push(rec);
+          return { data: null, error: null };
+        };
+        return table === "sets" ? throughGate(doUpsert) : Promise.resolve(doUpsert());
       };
       return api;
     }
 
     const otpCalls = []; // Testbeleg: shouldCreateUser wurde tatsächlich als false übergeben, nicht nur im Kommentar behauptet
+
+    // Mehrbenutzer-Timing-Steuerung für Tests: erlaubt, eine sets-Schreiboperation (upsert/delete) gezielt
+    // "unterwegs" zu halten (z. B. während eines Kontowechsels), um app.js' Generation-Guard gegen
+    // verzögerte/veraltete Schreibantworten deterministisch zu prüfen. Ohne aktives Gate verhält sich
+    // alles wie bisher (sofort auflösendes Promise) — NUR Test-Infrastruktur, kein Produktionscode.
+    let writeGate = null;
+    let forcedWriteError = null;
+    function gateWrites() {
+      let release;
+      writeGate = new Promise((res) => { release = res; });
+      return () => { const w = writeGate; writeGate = null; release(); return w; };
+    }
+    function forceNextWriteError(message) { forcedWriteError = message; }
+    function throughGate(doWrite) {
+      return (writeGate || Promise.resolve()).then(() => {
+        if (forcedWriteError) { const msg = forcedWriteError; forcedWriteError = null; return { data: null, error: { message: msg } }; }
+        return doWrite();
+      });
+    }
+
     return {
       __test: {
         get accounts() { return accounts; },
         get plansOf() { return (email) => (accounts[email] ? accounts[email].plans : []); },
         get setsOf() { return (email) => (accounts[email] ? accounts[email].sets : []); },
         get otpCalls() { return otpCalls; },
-        setSession: (s) => { session = s; }, fire
+        setSession: (s) => { session = s; }, fire,
+        gateWrites, forceNextWriteError
       },
       auth: {
         getSession: async () => ({ data: { session } }),

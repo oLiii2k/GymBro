@@ -6,6 +6,9 @@
 //   unit  = "s" → Sekunden statt Wiederholungen, kein Gewicht/Volumen (z. B. Plank). Nie weglassen, nie
 //           stillschweigend als "Wdh @ 0 kg" behandeln — siehe app.js vol()/Stepper (5er-Schritte).
 //   explain = Deep-Link zur ausführlichen Erklärung (MODUSX-Übersicht; kein fremdes Grafik-Asset übernommen)
+//   note    = NUR allgemeine, personenunabhängige Ausführungs-/Sicherheitshinweise (z. B. "bei Schulterbeschwerden …").
+//             Niemals persönliche Trainingshistorie, Datum oder einen Lastreduktions-/Zielgewichtswert einer
+//             Einzelperson hinterlegen — diese Datei wird unverändert an JEDES Konto ausgeliefert (siehe README Mehrbenutzer).
 window.GYMBRO_LIBRARY = [
   { id: "kh-bankdruecken", name: "KH-Bankdrücken flach", sets: 3, wMin: 6, wMax: 10, kg: 17, pair: true, muscle: "Brust",
     figure: "bankdruecken", tempo: "2-1-2", tempoText: "Hoch 2 s, oben 1 s, runter 2 s. Tippen = groß.",
@@ -23,7 +26,7 @@ window.GYMBRO_LIBRARY = [
             "Neutraler Griff, Hanteln auf Schulterhöhe starten.",
             "Drücken, ohne die Schulter hochzuziehen.",
             "Ziehen oder Einklemmen beendet den Satz — nicht die Wiederholung."],
-    note: "<b>Nicht steigern.</b> Rückstufung von 2×14 kg wegen Schultergefühl. Erst nach zwei vollständigen Einheiten ohne Auffälligkeit wieder hoch.",
+    note: "Bei Schulterbeschwerden: Gewicht nicht steigern, bis zwei vollständige Einheiten ohne Auffälligkeit möglich waren.",
     explain: "https://modusx.de/fitness-uebungen/" },
   { id: "kh-seitheben", name: "KH-Seitheben sitzend", sets: 3, wMin: 10, wMax: 15, kg: 4, pair: true,
     muscle: "Schulter seitlich", flag: { kind: "hold", text: "halten" },
@@ -45,7 +48,7 @@ window.GYMBRO_LIBRARY = [
     hints: ["Bank niedrig geneigt (15–30°).", "Hanteln auf Höhe der oberen Brust starten."],
     explain: "https://modusx.de/fitness-uebungen/" },
   { id: "aufstehen-bank", name: "Kontrolliertes Aufstehen zur Bank", sets: 3, wMin: 8, wMax: 12, kg: 10,
-    muscle: "Beine · Knie", note: "<b>Ziel 3×12 bei 10 kg</b>, Last steigt nur, wenn das Knie im Training <i>und</i> am Folgetag ruhig war. Nur so tief, wie beide Knie ruhig bleiben.",
+    muscle: "Beine · Knie", note: "Bei Knie-Empfindlichkeit: Last nur steigern, wenn das Knie während des Trainings <i>und</i> am Folgetag beschwerdefrei war. Nur so tief gehen, wie beide Knie ruhig bleiben.",
     figure: "aufstehen", tempo: "2-0-2", tempoText: "Hoch 2 s, kontrolliert absetzen 2 s.",
     hints: ["Höhere Sitzfläche oder Handstütze erlaubt.", "Nicht fallen lassen — kontrolliert absetzen."],
     explain: "https://modusx.de/fitness-uebungen/" },
@@ -81,7 +84,7 @@ window.GYMBRO_LIBRARY = [
 // Builtin-Pläne A/B/C: im Code fest (sets.plan_id = "A"/"B"/"C"), ohne Anlegen sofort startbar.
 // Weitere Pläne (max. A–E) liegen in der Tabelle `plans`. Struktur identisch zu plans.exercises
 // (id + optionale sets/wMin/wMax/kg-Overrides je Übung), damit app.js Builtin- und DB-Pläne gleich behandelt.
-// Quelle B/C: von Mira bereitgestellter Plan (wiki/privat/health/Trainingsplan ABC.md, Stand 2026-10-03).
+// Quelle B/C: extern bereitgestellter Trainingsplan (Stand 2026-10-03), ohne personenbezogene Angaben übernommen.
 // Geteilt mit A: kh-rudern-einarmig, kh-seitheben. Geteilt B↔C: aufstehen-bank, rdl-langhantel.
 window.GYMBRO_BUILTIN_PLANS = [
   { // A — Oberkörper

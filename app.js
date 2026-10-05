@@ -137,7 +137,10 @@
   }
 
   // ---------- Laden ----------
-  const resolve = (pe) => (LIB[pe.id] ? { ...LIB[pe.id], sets: pe.sets ?? LIB[pe.id].sets, wMin: pe.wMin ?? LIB[pe.id].wMin, wMax: pe.wMax ?? LIB[pe.id].wMax, kg: pe.kg ?? LIB[pe.id].kg } : null);
+  // Defensiv gegen unbekannte/kaputte Plan-Daten (fremde/alte DB-Zeile, manueller SQL-Edit, zukünftiges Schema):
+  // pe kann null/kein Objekt sein oder auf eine gelöschte/unbekannte Übungs-ID zeigen — dann still filtern (unten),
+  // statt die ganze App beim Laden abstürzen zu lassen.
+  const resolve = (pe) => (pe && LIB[pe.id] ? { ...LIB[pe.id], sets: pe.sets ?? LIB[pe.id].sets, wMin: pe.wMin ?? LIB[pe.id].wMin, wMax: pe.wMax ?? LIB[pe.id].wMax, kg: pe.kg ?? LIB[pe.id].kg } : null);
 
   async function load() {
     const myGen = gen; // Mehrbenutzer-Guard: Ergebnis nur übernehmen, wenn währenddessen kein Konto-Wechsel/Logout war
@@ -159,7 +162,8 @@
     // Builtin-Pläne (A/B/C) zuerst — Labels A..E ergeben sich aus der Reihenfolge, weitere Pläne aus der DB.
     const raw = [...BUILTIN.map((b) => ({ builtin: true, name: b.name, exercises: b.exercises })),
       ...pl.data.map((p) => ({ id: p.id, name: p.name, exercises: p.exercises }))];
-    const plans = raw.slice(0, MAX_PLANS).map((p, i) => ({ ...p, id: p.builtin ? LABELS[i] : p.id, label: LABELS[i], exs: p.exercises.map(resolve).filter(Boolean) }));
+    // p.exercises kann bei einer kaputten/fremden DB-Zeile fehlen oder kein Array sein — dann leerer Plan statt Crash.
+    const plans = raw.slice(0, MAX_PLANS).map((p, i) => ({ ...p, id: p.builtin ? LABELS[i] : p.id, label: LABELS[i], exs: (Array.isArray(p.exercises) ? p.exercises : []).map(resolve).filter(Boolean) }));
     if (myGen !== gen) return; // währenddessen abgemeldet / Konto gewechselt — Ergebnis gehört nicht mehr hierher
     data = { plans, rows: rw.data, lastBy, progress: data ? data.progress : null };
   }
@@ -213,13 +217,22 @@
     return error;
   }
   // Ändert einen Satz optimistisch, schreibt in die DB, rollt bei Fehler zurück.
+  // Mehrbenutzer-Guard (wie load()/loadProgress()): persist()/unpersist() können über den Netzwerk-Await hinweg
+  // laufen, während währenddessen abgemeldet oder zu einem anderen Konto gewechselt wird (neue `gen`). Ohne den
+  // Vergleich würde die danach laufende Fehlerbehandlung (Rollback-Render + Toast) auf dem dann AKTUELLEN
+  // (neuen) Konto-Zustand rendern/toasten, obwohl der Fehler zum vorherigen Konto gehört — verwirrend bis
+  // potenziell irreführend. Der Schreibzugriff selbst ist serverseitig bereits an den zum Aufrufzeitpunkt
+  // gültigen Auth-Token gebunden (RLS greift serverseitig unabhängig davon), dieser Guard schützt nur die
+  // CLIENT-seitige Nachbehandlung (Rollback/Render/Toast).
   async function mutate(e, k, patch) {
+    const myGen = gen;
     const s = st[e.id].sets[k], old = { ...s };
     Object.assign(s, patch);
     render();
     let err = null;
     if (s.done) err = await persist(e, k);
     else if (old.done) err = await unpersist(e, k);
+    if (myGen !== gen) return; // währenddessen abgemeldet/Konto gewechselt — Antwort gehört nicht mehr hierher
     if (err) { Object.assign(s, old); render(); toast("Nicht gespeichert: " + err.message); }
   }
 

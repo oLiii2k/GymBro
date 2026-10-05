@@ -182,14 +182,86 @@ Diese drei Punkte sind **dokumentiert als ausstehend**, nicht stillschweigend vo
 liegt bei der Eltern-Instanz/Deployment-Verantwortlichen, nicht bei diesem Client-Code.
 
 ### Architektur-Vorschlag (NICHT umgesetzt — braucht Entscheidung, bevor er gebaut wird)
-`plan.js` enthält bei einigen Bibliotheksübungen ein `note`-Feld mit Olivers persönlichem Trainingskontext
-(z. B. Schulter-Rückstufung, Knie-Zielwert). Diese Notizen sind Teil der GETEILTEN, globalen Bibliothek —
-jedes neue Konto sähe sie standardmäßig mit, obwohl sie Olivers persönliche Historie sind, nicht eine
-allgemeine Übungsvorgabe. Das ist ein echter Mehrbenutzer-Webfehler, aber keiner, der sich ohne
-Schema-Erweiterung sauber lösen lässt (die Notizen client-seitig zu verstecken würde sie nur verschleiern,
-nicht entfernen). Vorschlag zur Entscheidung durch die Eltern-Instanz, nicht in dieser Sitzung umgesetzt:
-eine neue, additive, RLS-geschützte Tabelle `exercise_notes (user_id, exercise_id, note, updated_at)`, aus
-der `app.js` private Notizen pro Konto lädt; die aktuellen `note`-Felder in `plan.js` würden dann entweder
-entfernt oder zu rein generischen Form-Hinweisen (ohne persönliche Lastangaben) reduziert. Bis zur
-Entscheidung bleiben die Notizen unverändert im Code — bewusst nicht angefasst, um bestehendes Verhalten
-für Oliver nicht zu brechen, während eine Mehrbenutzer-Lösung aussteht.
+`plan.js` enthielt bei einigen Bibliotheksübungen ein `note`-Feld mit persönlichem Trainingskontext
+(Rückstufungsgrund + konkretes Gewicht bei der Schulterübung, persönlicher Zielwert + Knie-Historie bei der
+Aufstehen-Übung) sowie ein Kommentar mit Namen und privatem Dateipfad einer Drittperson. Diese Notizen waren
+Teil der GETEILTEN, globalen Bibliothek — jedes neue Konto hätte sie standardmäßig mitgesehen, obwohl sie
+persönliche Historie einer Einzelperson waren, keine allgemeine Übungsvorgabe. **Behoben (2026-10-05, dieser
+Durchgang):** Die betroffenen `note`-Felder wurden auf generische, personenunabhängige Ausführungshinweise
+reduziert (z. B. „Bei Schulterbeschwerden: Gewicht nicht steigern, bis zwei vollständige Einheiten ohne
+Auffälligkeit möglich waren.“ statt des konkreten Rückstufungsgewichts), der Name-/Pfad-Kommentar wurde
+anonymisiert. **Keine neue Tabelle/Schema-Änderung nötig** — die Lösung ist rein redaktionell (Text in
+`plan.js` geändert), keine private Notiz wurde in ein anderes, weiterhin global sichtbares Asset verschoben.
+Regressionstests: `test/privacy.test.js` (prüft sowohl den rohen Quelltext als auch das geladene
+`GYMBRO_LIBRARY`-Objekt auf die konkreten vorher geleakten Formulierungen, auf Datumsangaben und auf
+Ich-Form/persönliche Zielwert-Muster in `note`-Feldern — damit ein künftiger Note-Text mit ähnlichem Leck
+den Test wieder rot macht). Plank behält seinen bereits-generischen Alternativ-Hinweis („Stört er Ellenbogen
+oder Knie: Dead Bug 3 × 6–10 / Seite.“) unverändert — das ist eine für jedes Konto gültige Ausführungsregel,
+keine persönliche Historie.
+
+Falls künftig doch EINZELNE Konten eigene, wirklich private Trainingsnotizen brauchen sollen (nicht nur
+generische Hinweise für alle), bleibt der ursprüngliche Vorschlag gültig: eine neue, additive,
+RLS-geschützte Tabelle `exercise_notes (user_id, exercise_id, note, updated_at)` — das ist aber ein
+Feature-Wunsch für die Zukunft, keine Voraussetzung für diesen Privacy-Fix.
+
+## v3 — Zweiter Review-Durchgang (2026-10-05, derselbe Tag): Auth-/Mehrbenutzer-Härtung + Fehlerbehandlung
+
+Unabhängige Überprüfung des bei 56cc68d committeten Stands (NICHT identisch mit dem Audit-Text weiter oben,
+der vor 56cc68d entstand und daher nicht mehr der tatsächliche Code war). Ergebnis: Auth-Screens
+(Login/Magic-Link/Passwort-vergessen/Passwort-setzen über `PASSWORD_RECOVERY`), Plan-Editor-Erhalt
+bestehender `sets`-Historie und die Mehrbenutzer-Zustandstrennung (`resetState()`/`gen`) waren bereits
+korrekt und sind unverändert geblieben. Zwei zusätzliche Härtungen wurden ergänzt:
+
+1. **Generation-Guard auch für Satz-Schreibantworten (`mutate()`):** `load()`/`loadProgress()` prüften schon
+   vor dieser Änderung `myGen !== gen`, um veraltete Lese-Antworten nach einem Kontowechsel zu verwerfen —
+   `mutate()` (der Pfad für ✓/Satz-Änderungen) tat das nicht. Eine Schreibantwort, die über einen
+   Kontowechsel hinweg unterwegs war, konnte danach noch einen Rollback-Render + Fehler-Toast auslösen, der
+   sich auf das NEUE (dann aktive) Konto bezog, obwohl der Fehler zum vorherigen Konto gehörte. Der
+   eigentliche Schreibzugriff selbst war nie fehlerhaft auf ein falsches Konto gerichtet (serverseitig an den
+   zum Aufrufzeitpunkt gültigen Auth-Token gebunden, RLS bleibt die harte Grenze) — betroffen war nur die
+   client-seitige Nachbehandlung. Jetzt verwirft `mutate()` ebenfalls still, wenn sich `gen` geändert hat.
+   Regressionstest: `test/dom.test.js` → „verzögerte Satz-Schreibantwort … Generation-Guard“ (nutzt ein neues
+   Test-only-Gate in `mock-supabase.js`, `__test.gateWrites()`/`forceNextWriteError()`, um eine Schreibantwort
+   gezielt bis nach einem Kontowechsel anzuhalten).
+2. **Unbekannte/kaputte Plan-Daten crashen die App nicht mehr:** `load()` ging bisher davon aus, dass
+   `plans.exercises` immer ein Array ist; eine kaputte/fremde DB-Zeile (`exercises: null` oder fehlendes
+   Feld) ließ `.map()` werfen und riss den gesamten Ladevorgang (und damit Login/Übersicht) mit. Jetzt fällt
+   ein fehlendes/kein-Array-`exercises`-Feld auf einen leeren Übungs-Array zurück (Plan erscheint mit „0
+   Übungen“ statt die App zum Absturz zu bringen); `resolve()` ist zusätzlich gegen `null`/kaputte
+   Einzeleinträge abgesichert. Bereits vorher robust: unbekannte einzelne Übungs-IDs wurden schon still
+   gefiltert (jetzt mit explizitem Regressionstest). Regressionstests: `test/dom.test.js` → „Plan-Daten: …“
+   (zwei Fälle: unbekannte Übungs-ID innerhalb eines sonst gültigen Plans; `exercises` komplett fehlt/kein
+   Array).
+3. **Fortschritt-Session-Zählung gegen Plan-Wechsel am selben Tag abgesichert (bestätigtes Verhalten, kein
+   Bugfix):** Zusätzlicher Regressionstest bestätigt, dass zwei Sätze derselben Übung am selben Kalendertag,
+   aber unter zwei VERSCHIEDENEN Plänen gespeichert, weiterhin als genau EINE Session zählen (nicht zwei) —
+   das Schema trägt zwar `date` UND `plan_id` je Satz, aber der Session-Begriff ist bewusst planübergreifend
+   nach `date` allein definiert (siehe `logic.js::sessionsFromRows()`). Ein zweiter Test bestätigt das
+   Gegenstück: zwei echte Sessions an unterschiedlichen Tagen mit unterschiedlichem Plan zählen weiterhin
+   korrekt als 2, der Plan-Wechsel täuscht also weder eine zusätzliche noch eine fehlende Session vor.
+   (`test/logic.test.js`)
+
+**Nicht erneut geändert (bewusst, siehe Scope):** keine neue Datenbank-Tabelle/-Migration, keine Änderung an
+Auth-Konfiguration/Invite-Flow (serverseitig weiterhin PENDING, siehe oben), kein Zugriff auf eine echte
+Postgres-Instanz oder das Produktions-Supabase-Projekt, kein Push.
+
+### Live-Verifikation gegen das echte Supabase-Projekt — weiterhin NICHT ausgeführt (Blocker)
+Der Browser-Automatisierungs-Pfad für einen Live-Vertrauens-Check gegen das echte Supabase-Projekt ist in
+dieser Umgebung zweimal mit Timeout fehlgeschlagen. Auf ausdrückliche Vorgabe wurde dieser blockierte Weg
+NICHT erneut versucht, ohne vorher Rücksprache zu halten. Eine lokal installierte Playwright-Instanz wäre für
+einen reinen Fixture-Smoke-Test (gegen Mock/jsdom, kein echtes Backend) eine mögliche Alternative gewesen,
+wurde in diesem Durchgang aber nicht zusätzlich eingesetzt, weil die bestehende jsdom-Testsuite (`npm test`,
+34/34 grün) denselben Code bereits über echte DOM-Interaktion gegen `app.js` abdeckt. **Nicht verwechseln:**
+„34/34 grün“ heißt ausschließlich „gegen den Mock, der RLS *nachbildet*, bestanden“ — es ist weiterhin KEIN
+Beweis für die echten Postgres-RLS-Policies im Supabase-Projekt. Diese Grenze war schon vorher dokumentiert
+(siehe „Offene Verifikation“ oben) und bleibt unverändert offen.
+
+### Unresolved / verbleibende Blocker nach diesem Durchgang
+1. Echte Postgres-RLS-Verifikation (lokale/Staging-Instanz oder zwei echte Testnutzer) — weiterhin nicht
+   ausgeführt, siehe „Offene Verifikation“ oben.
+2. Produktions-Auth-Konfiguration für Invite-only (Supabase-Dashboard „Allow new users to sign up“
+   deaktivieren, Konten nur per Admin-Invite anlegen) — weiterhin PENDING, liegt bei der
+   Eltern-Instanz/Deployment-Verantwortlichen.
+3. Kein echter End-to-End-Durchlauf eines Invite-Links gegen das Produktionsprojekt (kein Produktions-Mailversand
+   in dieser Sitzung).
+4. Lokaler Commit in diesem Durchgang NICHT gepusht (Weisung: kein Push, keine Produktionsschreibzugriffe).
