@@ -265,3 +265,7 @@ Beweis für die echten Postgres-RLS-Policies im Supabase-Projekt. Diese Grenze w
 3. Kein echter End-to-End-Durchlauf eines Invite-Links gegen das Produktionsprojekt (kein Produktions-Mailversand
    in dieser Sitzung).
 4. Lokaler Commit in diesem Durchgang NICHT gepusht (Weisung: kein Push, keine Produktionsschreibzugriffe).
+
+## v4-Scope (abgegrenzt, nicht Teil von v3)
+- **Persönliche Übungsnotiz pro Nutzer, mit Zeitstempel und auflösbar:** neue Tabelle `exercise_notes (user_id, exercise_id, note, updated_at)`, RLS wie `plans`/`sets`. Ersetzt/ergänzt die generische `note` aus der geteilten Bibliothek um eine individuelle Begründungsebene (z. B. "Rückstufung wegen Schultergefühl, Datum X") — muss aktiv löschbar sein, sonst bremst sie Progression, wenn der Grund längst weg ist. Ausgelöst durch den Privacy-Fix oben (generische Notiz reicht fürs Teilen, aber verliert die persönliche Begründung). Anzeige trägt sichtbar das Datum ("seit 30.09."); sobald die in der Notiz genannte Bedingung erfüllt ist (bei Oliver: zwei unauffällige Einheiten seit `updated_at`, reiner Zähler aus den Sätzen), kippt die gelbe Warnung zu einer blauen Rückfrage "Gilt das noch? · Behalten / Erledigt" — die App löst nichts automatisch auf, sie fragt genau einmal nach.
+- **Aufräumen (kein Feature):** Pixelwerte im `<style>`-Block, die außerhalb der 6er-Abstandsskala liegen (gefunden: 40/20/34/14px, gemeint war 32/24/36/16), auf `var(--s-*)`-Tokens ziehen. Ausnahmen nur für Trefferflächen/feste Maße (46, 56, 88, 392 sind legitim, keine Tokens).
