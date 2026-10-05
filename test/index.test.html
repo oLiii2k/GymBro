@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="de" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>GymBro — isolierter Test-Harness (Mock-Supabase, KEINE echten Daten)</title>
+<link rel="stylesheet" href="../tokens.css">
+</head>
+<body>
+<p style="font:12px monospace;background:#400;color:#fff;padding:6px">TEST-ONLY HARNESS — Mock-Supabase, keine echten Netzwerkaufrufe, keine Produktionsdaten.</p>
+<button class="themebtn" id="t" style="display:none"></button>
+<div class="toast" id="toast" role="status"></div>
+<div class="phone" id="app"></div>
+<div class="big" id="big" onclick="this.classList.remove('on')"><svg viewBox="0 0 104 104" id="bigsvg"></svg></div>
+
+<script src="mock-supabase.js"></script>
+<script src="test-config.js"></script>
+<script>
+  // Stellt window.supabase nach, BEVOR app.js läuft — exakt an der Stelle, an der echte Seiten die
+  // Supabase-CDN-Bibliothek laden würden. So bleibt app.js unverändert testbar.
+  window.supabase = { createClient: () => window.__GYMBRO_MOCK__.makeFakeSupabase(window.__GYMBRO_SEED__) };
+</script>
+<script src="../logic.js"></script>
+<script src="../plan.js"></script>
+<script src="../app.js"></script>
+</body>
+</html>

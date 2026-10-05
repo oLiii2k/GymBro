@@ -1,9 +1,10 @@
-// GymBro v2 — Übersicht, Heute (Satz-Eingabe), Pläne. Supabase für Auth + Daten.
+// GymBro v3 — Übersicht, Heute (Satz-Eingabe), Pläne + Editor, Fortschritt, E-Mail/Passwort-Login.
 // Grundregeln (README): Wo ein Wert aus der Historie bekannt ist, wird er VORGESCHLAGEN statt leer
-// gestartet; gespeichert wird erst nach Bestätigung (✓ bzw. "Plan speichern").
-// Farbcode: Orange = weicht von der Vorgabe ab, Grün = bestätigt, Blau = anfassbare Aktion.
+// gestartet; gespeichert wird erst nach Bestätigung (✓ bzw. "Speichern"). Farbcode: Orange = weicht von
+// der Vorgabe ab, Grün = bestätigt, Blau = anfassbare Aktion.
 (() => {
-  const EXS = window.GYMBRO_LIBRARY, PLAN_A = window.GYMBRO_PLAN_A, FIG = window.GYMBRO_FIGURES, CFG = window.GYMBRO_CONFIG || {};
+  const EXS = window.GYMBRO_LIBRARY, BUILTIN = window.GYMBRO_BUILTIN_PLANS, FIG = window.GYMBRO_FIGURES;
+  const CFG = window.GYMBRO_CONFIG || {}, LOGIC = window.GYMBRO_LOGIC;
   const LIB = Object.fromEntries(EXS.map((e) => [e.id, e]));
   const LABELS = "ABCDE", MAX_PLANS = LABELS.length;
   const $ = (s) => document.querySelector(s);
@@ -15,7 +16,8 @@
   const today = new Date(), TODAY = iso(today);
   const weekStart = new Date(today); weekStart.setDate(today.getDate() - ((today.getDay() + 6) % 7)); // Montag
   const WEEK_START = iso(weekStart);
-  const SINCE = iso(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 28)); // Historienfenster
+  const SINCE = iso(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 28)); // Historienfenster (Vorbelegung)
+  const PROGRESS_SINCE = iso(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 365)); // Fortschritt: 1 Jahr
   const kw = (() => { // ISO-Kalenderwoche
     const d = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()));
     d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
@@ -25,6 +27,7 @@
   const shortDate = (d) => new Date(d + "T12:00:00").toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" });
   const fmtKg = (n) => Math.round(n).toLocaleString("de-DE") + " kg";
   const fmtW = (n) => String(n).replace(".", ",");
+  const unitLabel = (e) => (e.unit === "s" ? "s" : "Wdh");
 
   // ---------- Theme ----------
   const tb = $("#t"), root = document.documentElement;
@@ -32,11 +35,16 @@
   function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove("on"), 4000); }
 
   // ---------- Zustand ----------
-  // data  = { plans:[{id,label,name,builtin,exs:[…]}], rows:[Sätze der letzten 28 Tage], lastBy:{exId:[Sätze letzter Tag]} }
+  // data  = { plans:[{id,label,name,builtin,exs:[…]}], rows:[Sätze der letzten 28 Tage], lastBy:{exId:[Sätze letzter Tag]}, progress:{exId:rows}|null }
   // st    = Satz-Eingabe für den AKTIVEN Plan: st[exId] = { sets:[{reps,kg,done}], last, lastDate }
-  let sb, data = null, st = {}, activeId = null, tab = "uebersicht", openId = null, form = null;
-  const mult = (e) => (e.pair ? 2 : 1) * (e.sides ? 2 : 1);
-  const vol = (e, s) => s.reps * s.kg * mult(e);
+  // Mehrbenutzer-Härtung: jede Konto-Session bekommt eine Generation-Nummer (`gen`). Asynchrone Antworten,
+  // die noch für eine ÄLTERE Generation unterwegs waren (Kontowechsel/Abmelden währenddessen), werden beim
+  // Zurückkommen verworfen statt ins falsche Konto geschrieben zu werden — das ist der eigentliche Schutz,
+  // RLS in Postgres ist die zweite, serverseitige Schicht (siehe supabase/schema.sql, schema-v2.sql).
+  let sb, data = null, st = {}, activeId = null, tab = "uebersicht", openId = null, form = null, progressExId = null, recoveryMode = false;
+  let gen = 0, currentUserId = null, currentEmail = null;
+  function resetState() { data = null; st = {}; activeId = null; tab = "uebersicht"; openId = null; form = null; progressExId = null; currentUserId = null; currentEmail = null; }
+  const mult = LOGIC.mult, vol = LOGIC.vol;
   const plan = (id) => data.plans.find((p) => p.id === id);
   const planSets = (p) => p.exs.reduce((a, e) => a + e.sets, 0);
   const planTitle = (p) => `Training ${p.label} — ${p.name}`;
@@ -47,23 +55,92 @@
   }
   sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
 
-  // ---------- Auth: Magic Link ----------
-  function showLogin(msg) {
-    app.innerHTML = `<form class="login" id="lf"><h1>GymBro</h1>
-      <p>${msg || "Anmelden per Magic Link: E-Mail eingeben, Link im Postfach antippen."}</p>
-      <input type="email" id="em" placeholder="E-Mail" autocomplete="email" required>
-      <button class="save" type="submit">Link senden</button></form>`;
+  // ---------- Auth ----------
+  // Ein Konto, drei Wege rein: Passwort (Normalweg, Primäraktion), Magic Link (Rückfallweg, umrandet),
+  // Passwort-Reset (Textlink → E-Mail mit Link → PASSWORD_RECOVERY-Event → neues Passwort setzen).
+  // Niemals signUp(): es gibt kein "neues Konto", nur das bestehende Supabase-Konto mit derselben E-Mail.
+  function showLogin(opts) {
+    opts = opts || {};
+    const mode = opts.mode || "password"; // "password" | "magic" | "forgot"
+    const err = opts.err ? `<div class="err">${esc(opts.err)}</div>` : "";
+    const info = opts.info ? `<p class="hintline">${esc(opts.info)}</p>` : "";
+    if (mode === "magic") {
+      app.innerHTML = `<form class="login" id="lf"><div class="brand">GymBro</div><div class="brandsub">Dein Trainingslog</div>
+        <p class="hintline">Anmelden per Magic Link: E-Mail eingeben, Link im Postfach antippen.</p>${info}
+        <label class="f" for="em">E-Mail</label><input class="txt" type="email" id="em" autocomplete="email" required>
+        <button class="primary" type="submit">Link senden</button>
+        <button class="ghost" type="button" id="back">Stattdessen mit Passwort</button>${err}</form>`;
+      $("#lf").onsubmit = async (ev) => {
+        ev.preventDefault();
+        // Nur Einladung, kein offenes Self-Signup (Nutzerentscheidung): shouldCreateUser:false verhindert,
+        // dass eine unbekannte E-Mail per Magic Link automatisch ein neues Konto bekommt (siehe Supabase-Docs
+        // "Passwordless email logins"). Das ist nur die Client-Bremse — serverseitig muss zusätzlich
+        // "Allow new users to sign up" im Dashboard deaktiviert werden (siehe README, PENDING/nicht gesetzt).
+        const { error } = await sb.auth.signInWithOtp({ email: $("#em").value.trim(),
+          options: { emailRedirectTo: location.href.split("#")[0], shouldCreateUser: false } });
+        showLogin({ mode: "magic", info: error ? null : "Falls ein Konto zu dieser E-Mail existiert, ist der Link unterwegs.", err: error && error.message });
+      };
+      $("#back").onclick = () => showLogin({ mode: "password" });
+      return;
+    }
+    if (mode === "forgot") {
+      app.innerHTML = `<form class="login" id="lf"><div class="brand">GymBro</div><div class="brandsub">Dein Trainingslog</div>
+        <p class="hintline">Passwort vergessen: E-Mail eingeben, wir schicken einen Link zum Setzen eines neuen Passworts.</p>${info}
+        <label class="f" for="em">E-Mail</label><input class="txt" type="email" id="em" autocomplete="email" required>
+        <button class="primary" type="submit">Link senden</button>
+        <button class="ghost" type="button" id="back">Zurück zur Anmeldung</button>${err}</form>`;
+      $("#lf").onsubmit = async (ev) => {
+        ev.preventDefault();
+        const { error } = await sb.auth.resetPasswordForEmail($("#em").value.trim(), { redirectTo: location.href.split("#")[0] });
+        // Supabase verrät bewusst nicht, ob die E-Mail existiert (Schutz vor User-Enumeration) — gleiche Meldung immer.
+        showLogin({ mode: "forgot", info: error ? null : "Wenn ein Konto zu dieser E-Mail existiert, ist der Link unterwegs.", err: error && error.message });
+      };
+      $("#back").onclick = () => showLogin({ mode: "password" });
+      return;
+    }
+    // mode === "password" (Standard): genau eine Primäraktion.
+    app.innerHTML = `<form class="login" id="lf"><div class="brand">GymBro</div><div class="brandsub">Dein Trainingslog</div>
+      <label class="f" for="em">E-Mail</label><input class="txt" type="email" id="em" inputmode="email" autocomplete="username" required>
+      <label class="f" for="pw">Passwort</label>
+      <div class="pwrow"><input class="txt" type="password" id="pw" autocomplete="current-password" style="padding-right:50px" required>
+        <button class="eye" type="button" id="eye" aria-label="Passwort anzeigen">Zeigen</button></div>
+      <button class="primary" type="submit">Anmelden</button>
+      <button class="ghost" type="button" id="magic">Stattdessen Link per E-Mail</button>
+      <a class="link" href="#" id="forgot">Passwort vergessen</a>${err}</form>`;
+    $("#eye").onclick = () => { const p = $("#pw"), s = p.type === "password"; p.type = s ? "text" : "password"; $("#eye").textContent = s ? "Verbergen" : "Zeigen"; };
+    $("#magic").onclick = () => showLogin({ mode: "magic" });
+    $("#forgot").onclick = (ev) => { ev.preventDefault(); showLogin({ mode: "forgot" }); };
     $("#lf").onsubmit = async (ev) => {
       ev.preventDefault();
-      const { error } = await sb.auth.signInWithOtp({ email: $("#em").value.trim(), options: { emailRedirectTo: location.href.split("#")[0] } });
-      showLogin(error ? "Fehler: " + esc(error.message) : "Link ist unterwegs. Öffne ihn auf diesem Gerät.");
+      const { error } = await sb.auth.signInWithPassword({ email: $("#em").value.trim(), password: $("#pw").value });
+      // Generische Fehlermeldung: nie verraten, ob E-Mail ODER Passwort falsch war (Auskunft an Fremde).
+      if (error) showLogin({ mode: "password", err: "E-Mail oder Passwort stimmt nicht." });
+    };
+  }
+
+  // Passwort-Reset-Link führt zurück auf die Seite und löst PASSWORD_RECOVERY aus (Supabase loggt dabei
+  // temporär ein). Dieser Screen ersetzt KEIN signUp — dasselbe Konto bekommt nur erstmals/neu ein Passwort.
+  function showSetPassword(opts) {
+    opts = opts || {};
+    const err = opts.err ? `<div class="err">${esc(opts.err)}</div>` : "";
+    app.innerHTML = `<form class="login" id="sf"><div class="brand">GymBro</div><div class="brandsub">Neues Passwort setzen</div>
+      <label class="f" for="np">Neues Passwort</label><input class="txt" type="password" id="np" autocomplete="new-password" minlength="6" required>
+      <button class="primary" type="submit">Passwort speichern</button>${err}</form>`;
+    $("#sf").onsubmit = async (ev) => {
+      ev.preventDefault();
+      const { error } = await sb.auth.updateUser({ password: $("#np").value });
+      if (error) return showSetPassword({ err: error.message });
+      recoveryMode = false;
+      toast("Passwort gespeichert. Du bist jetzt angemeldet.");
+      await boot();
     };
   }
 
   // ---------- Laden ----------
-  const resolve = (pe) => (LIB[pe.id] ? { ...LIB[pe.id], sets: pe.sets, wMin: pe.wMin, wMax: pe.wMax, kg: pe.kg } : null);
+  const resolve = (pe) => (LIB[pe.id] ? { ...LIB[pe.id], sets: pe.sets ?? LIB[pe.id].sets, wMin: pe.wMin ?? LIB[pe.id].wMin, wMax: pe.wMax ?? LIB[pe.id].wMax, kg: pe.kg ?? LIB[pe.id].kg } : null);
 
   async function load() {
+    const myGen = gen; // Mehrbenutzer-Guard: Ergebnis nur übernehmen, wenn währenddessen kein Konto-Wechsel/Logout war
     const [pl, rw, ...lasts] = await Promise.all([
       sb.from("plans").select("id,name,exercises").order("created_at"),
       sb.from("sets").select("date,plan_id,exercise,set_index,reps,weight,done_at").gte("date", SINCE).limit(5000),
@@ -79,19 +156,26 @@
       const d = lasts[i].data;
       lastBy[e.id] = d.length ? d.filter((x) => x.date === d[0].date) : null;
     });
-    // Plan A ist im Code fest; weitere Pläne aus der DB. Buchstaben A–E ergeben sich aus der Reihenfolge.
-    const raw = [{ id: "A", builtin: true, name: PLAN_A.name, exercises: PLAN_A.ids.map((id) => ({ id, sets: LIB[id].sets, wMin: LIB[id].wMin, wMax: LIB[id].wMax, kg: LIB[id].kg })) },
+    // Builtin-Pläne (A/B/C) zuerst — Labels A..E ergeben sich aus der Reihenfolge, weitere Pläne aus der DB.
+    const raw = [...BUILTIN.map((b) => ({ builtin: true, name: b.name, exercises: b.exercises })),
       ...pl.data.map((p) => ({ id: p.id, name: p.name, exercises: p.exercises }))];
-    const plans = raw.slice(0, MAX_PLANS).map((p, i) => ({ ...p, label: LABELS[i], exs: p.exercises.map(resolve).filter(Boolean) }));
-    data = { plans, rows: rw.data, lastBy };
+    const plans = raw.slice(0, MAX_PLANS).map((p, i) => ({ ...p, id: p.builtin ? LABELS[i] : p.id, label: LABELS[i], exs: p.exercises.map(resolve).filter(Boolean) }));
+    if (myGen !== gen) return; // währenddessen abgemeldet / Konto gewechselt — Ergebnis gehört nicht mehr hierher
+    data = { plans, rows: rw.data, lastBy, progress: data ? data.progress : null };
   }
 
-  // "Dran" = der Plan nach dem zuletzt trainierten (Rotation). Ohne Historie: Plan A.
+  async function loadProgress() {
+    const myGen = gen;
+    const { data: rows, error } = await sb.from("sets").select("date,exercise,set_index,reps,weight").gte("date", PROGRESS_SINCE).limit(20000);
+    if (error) throw error;
+    if (myGen !== gen || !data) return; // Mehrbenutzer-Guard, siehe load()
+    data.progress = rows;
+  }
+
+  // "Dran" = der Plan nach dem zuletzt trainierten (Rotation, gleichberechtigt über alle Pläne).
   function dranId() {
-    if (!data.rows.length) return data.plans[0].id;
-    const m = data.rows.reduce((a, b) => (b.date > a.date || (b.date === a.date && b.done_at > a.done_at) ? b : a));
-    const i = data.plans.findIndex((p) => p.id === m.plan_id);
-    return data.plans[(i + 1) % data.plans.length].id; // i = -1 (Plan gelöscht) → Plan A
+    const i = LOGIC.dranIndex(data.plans.map((p) => p.id), data.rows);
+    return i < 0 ? null : data.plans[i].id;
   }
 
   // Satz-Eingabe für einen Plan aufbauen: Vorschlag = letztes Ist, sonst Planvorgabe; heutige ✓-Sätze einblenden
@@ -113,7 +197,7 @@
 
   async function refresh() {
     await load();
-    if (!activeId || !plan(activeId)) { activeId = dranId(); buildState(plan(activeId)); }
+    if (!activeId || !plan(activeId)) { activeId = dranId(); if (activeId) buildState(plan(activeId)); }
   }
 
   // ---------- Schreiben (nur ✓) ----------
@@ -149,17 +233,18 @@
   }
 
   // ---------- Rendering: Rahmen + Tab-Leiste ----------
-  const ICON = { uebersicht: "⌂", heute: "▶", plaene: "☰" };
-  const TABS = [["uebersicht", "Übersicht"], ["heute", "Heute"], ["plaene", "Pläne"]];
+  const ICON = { uebersicht: "⌂", heute: "▶", plaene: "☰", fortschritt: "📈" };
+  const TABS = [["uebersicht", "Übersicht"], ["heute", "Heute"], ["plaene", "Pläne"], ["fortschritt", "Fortschritt"]];
   function shell(inner) {
-    const t = tab === "neu" ? "plaene" : tab;
+    const t = (tab === "neu" || tab === "bearbeiten") ? "plaene" : tab;
     app.innerHTML = `<div class="screen">${inner}</div>
       <nav class="tabs">${TABS.map(([id, w]) => `<button data-tab="${id}" class="${t === id ? "on" : ""}"${t === id ? ' aria-current="page"' : ""}><i>${ICON[id]}</i>${w}</button>`).join("")}</nav>`;
     app.querySelectorAll("[data-tab]").forEach((b) => b.onclick = () => go(b.dataset.tab));
   }
   async function go(t) {
     tab = t; openId = null;
-    if (t !== "heute") { try { await refresh(); } catch (err) { toast("Laden fehlgeschlagen: " + err.message); } }
+    if (t === "fortschritt" && !data.progress) { try { await loadProgress(); } catch (err) { toast("Laden fehlgeschlagen: " + err.message); } }
+    else if (t !== "heute") { try { await refresh(); } catch (err) { toast("Laden fehlgeschlagen: " + err.message); } }
     render();
   }
   function start(id) { activeId = id; buildState(plan(id)); tab = "heute"; openId = null; render(); }
@@ -167,7 +252,8 @@
   function render() {
     if (tab === "heute") return renderHeute();
     if (tab === "plaene") return renderPlaene();
-    if (tab === "neu") return renderForm();
+    if (tab === "neu" || tab === "bearbeiten") return renderForm();
+    if (tab === "fortschritt") return renderFortschritt();
     return renderUebersicht();
   }
 
@@ -178,7 +264,7 @@
     return Object.values(g).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, 6);
   }
   function renderUebersicht() {
-    const dran = plan(dranId()), recent = histories();
+    const dranIdv = dranId(), dran = dranIdv ? plan(dranIdv) : null, recent = histories();
     const hist = recent.length ? recent.map((h) => {
       const p = plan(h.plan_id), total = p ? planSets(p) : null;
       const full = total !== null && h.n >= total, running = h.date === TODAY && !full;
@@ -186,13 +272,16 @@
       return `<div class="hrow"><div><div class="rname">${p ? esc(planTitle(p)) : "Gelöschter Plan"}</div><div class="rmeta">${shortDate(h.date)}</div></div>
         <div class="hval ${cls}">${running ? "läuft · " : ""}${total === null ? h.n : `${h.n}/${total}`} Sätze</div></div>`;
     }).join("") : `<div class="hintline">Noch keine Einheit — starte oben die erste.</div>`;
-    shell(`<header><h1>GymBro</h1><div class="sub">${dateLabel} · KW ${kw}</div></header><div class="pad">
-      <div class="card"><div class="label">Als Nächstes</div><div class="ctitle">${esc(planTitle(dran))}</div>
+    const nextCard = dran ? `<div class="card"><div class="label">Als Nächstes</div><div class="ctitle">${esc(planTitle(dran))}</div>
         <div class="rmeta">${dran.exs.length} Übungen · ${planSets(dran)} Sätze</div>
-        <button class="save" data-start="${dran.id}">Starten</button></div>
-      <h4>Pläne</h4>${data.plans.map((p) => `<div class="hrow"><div class="rname">${esc(planTitle(p))}</div>${p.id === dran.id ? '<span class="chip">Dran</span>' : ""}</div>`).join("")}
+        <button class="save" data-start="${dran.id}">Starten</button></div>` : `<div class="card"><div class="label">Als Nächstes</div><div class="hintline">Noch kein Plan vorhanden.</div></div>`;
+    shell(`<header><div><h1>GymBro</h1><div class="sub">${dateLabel} · KW ${kw}</div>
+        <div class="acct"><span>${esc(currentEmail || "")}</span><button class="linkbtn" id="out0">Abmelden</button></div></div></header><div class="pad">
+      ${nextCard}
+      <h4>Pläne</h4>${data.plans.map((p) => `<div class="hrow"><div class="rname">${esc(planTitle(p))}</div>${dran && p.id === dran.id ? '<span class="chip">Dran</span>' : ""}</div>`).join("")}
       <h4>Letzte Einheiten</h4>${hist}</div>`);
     wireStart();
+    $("#out0").onclick = () => sb.auth.signOut();
   }
   const wireStart = () => app.querySelectorAll("[data-start]").forEach((b) => b.onclick = () => start(b.dataset.start));
 
@@ -202,73 +291,158 @@
     const rows = data.plans.map((p) => `<div class="prow"><div class="plet">${p.label}</div>
       <div class="pmain"><div class="rname">${esc(p.name)}${p.id === dran ? ' <span class="chip">Dran</span>' : ""}</div>
         <div class="rmeta">${p.exs.length} Übungen · ${planSets(p)} Sätze</div>
-        ${p.builtin ? "" : `<button class="linkbtn" data-del="${p.id}">Löschen</button>`}</div>
+        ${p.builtin ? "" : `<button class="linkbtn" data-edit="${p.id}">Bearbeiten</button>`}</div>
       <button class="go" data-start="${p.id}">Starten</button></div>`).join("");
     const full = data.plans.length >= MAX_PLANS;
     shell(`<header><h1>Pläne</h1><div class="sub">${data.plans.length} von ${MAX_PLANS} · gleichberechtigt, Reihenfolge = Rotation</div></header><div class="pad">${rows}
       <button class="dashed" id="newplan"${full ? " disabled" : ""}>${full ? `Maximal ${MAX_PLANS} Pläne` : "+ Neuer Plan"}</button></div>`);
     wireStart();
-    const n = $("#newplan"); if (n) n.onclick = () => { form = { name: "", sel: {} }; tab = "neu"; render(); };
-    app.querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => {
-      if (!confirm("Plan löschen? Bereits gespeicherte Sätze bleiben erhalten.")) return;
-      const { error } = await sb.from("plans").delete().eq("id", b.dataset.del);
-      if (error) return toast("Nicht gelöscht: " + error.message);
-      if (activeId === b.dataset.del) activeId = null;
-      await go("plaene");
-    });
+    const n = $("#newplan"); if (n) n.onclick = () => openEditor(null);
+    app.querySelectorAll("[data-edit]").forEach((b) => b.onclick = () => openEditor(b.dataset.edit));
   }
 
-  // ---------- Plan anlegen ----------
-  // Zielspanne/Sätze/kg = Vorschlag aus dem letzten Ist der Übung (Bibliotheks-Standard, falls noch keins existiert)
-  function suggest(e) {
-    const l = data.lastBy[e.id];
-    if (!l) return { sets: e.sets, wMin: e.wMin, wMax: e.wMax, kg: e.kg, from: null };
-    const reps = l.map((x) => x.reps);
-    return { sets: l.length, wMin: Math.min(...reps), wMax: Math.max(...reps), kg: +l[0].weight, from: l[0].date };
+  // ---------- Plan-Editor (EIN Formular für Anlegen UND Bearbeiten) ----------
+  // form = { id: bestehende Plan-ID oder null (= neu), name, order: [exId,...] in Reihenfolge, spec: {exId:{sets,wMin,wMax,kg}} }
+  function suggest(e) { return LOGIC.suggestFromLast(e, data.lastBy[e.id]); }
+
+  function openEditor(planId) {
+    if (planId) {
+      const p = plan(planId);
+      form = { id: planId, name: p.name, order: p.exs.map((e) => e.id), spec: Object.fromEntries(p.exs.map((e) => [e.id, { sets: e.sets, wMin: e.wMin, wMax: e.wMax, kg: e.kg }])) };
+    } else {
+      form = { id: null, name: "", order: [], spec: {} };
+    }
+    tab = form.id ? "bearbeiten" : "neu";
+    render();
   }
+
+  function specFields(id) {
+    const s = form.spec[id], e = LIB[id], isSec = e.unit === "s";
+    const step = isSec ? 5 : 1;
+    if (isSec) {
+      return `<div class="spans" style="grid-template-columns:1fr 1fr 1fr">
+        <label class="f" style="margin:0">Sätze<div class="field"><button data-ex="${id}" data-f="sets" data-d="-1">−</button><span class="val">${s.sets}</span><span class="unit"></span><button data-ex="${id}" data-f="sets" data-d="1">+</button></div></label>
+        <label class="f" style="margin:0">Sek. von<div class="field"><button data-ex="${id}" data-f="wMin" data-d="-5">−</button><span class="val">${s.wMin}</span><span class="unit">s</span><button data-ex="${id}" data-f="wMin" data-d="5">+</button></div></label>
+        <label class="f" style="margin:0">Sek. bis<div class="field"><button data-ex="${id}" data-f="wMax" data-d="-5">−</button><span class="val">${s.wMax}</span><span class="unit">s</span><button data-ex="${id}" data-f="wMax" data-d="5">+</button></div></label>
+      </div><div class="hintline" style="grid-column:1/-1;padding-left:0">Körpergewicht — kein Gewichtsfeld, zählt nicht ins Tagesvolumen.</div>`;
+    }
+    return `<div class="spans">
+      <label class="f" style="margin:0">Sätze<div class="field"><button data-ex="${id}" data-f="sets" data-d="-1">−</button><span class="val">${s.sets}</span><span class="unit"></span><button data-ex="${id}" data-f="sets" data-d="1">+</button></div></label>
+      <label class="f" style="margin:0">Wdh von<div class="field"><button data-ex="${id}" data-f="wMin" data-d="-1">−</button><span class="val">${s.wMin}</span><span class="unit"></span><button data-ex="${id}" data-f="wMin" data-d="1">+</button></div></label>
+      <label class="f" style="margin:0">Wdh bis<div class="field"><button data-ex="${id}" data-f="wMax" data-d="-1">−</button><span class="val">${s.wMax}</span><span class="unit"></span><button data-ex="${id}" data-f="wMax" data-d="1">+</button></div></label>
+      <label class="f" style="margin:0">kg<div class="field"><button data-ex="${id}" data-f="kg" data-d="-2">−</button><span class="val">${fmtW(s.kg)}</span><span class="unit"></span><button data-ex="${id}" data-f="kg" data-d="2">+</button></div></label>
+    </div>`;
+  }
+
   function renderForm() {
-    const picks = EXS.map((e) => {
-      const s = form.sel[e.id];
-      const spec = s ? `<div class="spec">${[["sets", "Sätze"], ["wMin", "Wdh von"], ["wMax", "Wdh bis"], ["kg", "kg"]].map(([f, l]) =>
-        `<label>${l}<input type="number" inputmode="decimal" min="0" step="${f === "kg" ? 0.5 : 1}" data-ex="${e.id}" data-f="${f}" value="${s[f]}"></label>`).join("")}
-        <div class="hintline">${s.from ? `Vorschlag aus dem Ist vom ${shortDate(s.from)}` : "Noch kein Ist — Standardvorgabe"}</div></div>` : "";
-      return `<div class="pickwrap"><label class="pick"><input type="checkbox" data-pick="${e.id}"${s ? " checked" : ""}><span>${esc(e.name)}<small>${esc(e.muscle)}</small></span></label>${spec}</div>`;
-    }).join("");
-    shell(`<header><h1>Neuer Plan</h1><div class="sub">Nur Übungen aus der Bibliothek</div></header><div class="pad">
-      <input class="txt" id="pn" maxlength="60" placeholder="Name des Plans, z. B. Unterkörper" value="${esc(form.name)}">
-      <h4>Übungen</h4>${picks}
-      <button class="save" id="saveplan">Plan speichern</button><button class="linkbtn" id="cancel">Abbrechen</button></div>`);
+    const ord = form.order.map((id, i) => {
+      const e = LIB[id], s = form.spec[id];
+      return `<div class="ord" data-row="${id}"><div class="onum">${i + 1}</div>
+        <div><div class="oname">${esc(e.name)}</div><div class="ometa">${esc(e.muscle)}${s.from ? ` · Vorschlag vom ${shortDate(s.from)}` : ""}</div></div>
+        <button class="mv" data-up="${id}"${i === 0 ? " disabled" : ""} aria-label="${esc(e.name)} nach oben">↑</button>
+        <button class="mv" data-down="${id}"${i === form.order.length - 1 ? " disabled" : ""} aria-label="${esc(e.name)} nach unten">↓</button>
+        <button class="rm" data-rm="${id}" aria-label="${esc(e.name)} entfernen">×</button>
+        ${specFields(id)}</div>`;
+    }).join("") || `<div class="hintline">Noch keine Übung gewählt — aus der Bibliothek unten hinzufügen.</div>`;
+    const libRows = EXS.filter((e) => !form.order.includes(e.id)).map((e) => `<div class="lib">
+      <button class="add" data-add="${e.id}" aria-label="${esc(e.name)} hinzufügen">+</button>
+      <div><div class="oname">${esc(e.name)}</div><div class="ometa">${esc(e.muscle)}${e.unit === "s" ? " · in Sekunden" : ""}</div></div></div>`).join("");
+    const editing = !!form.id;
+    shell(`<header><div><h1>${editing ? `Plan ${plan(form.id).label} bearbeiten` : "Neuer Plan"}</h1>
+        <div class="sub">${editing ? "Änderungen gelten ab der nächsten Einheit" : "Nur Übungen aus der Bibliothek"}</div></div>
+        <button class="back" id="cancel">Abbrechen</button></header><div class="pad">
+      <label class="f" for="pn">Name</label><input class="txt" id="pn" maxlength="60" placeholder="z. B. Unterkörper" value="${esc(form.name)}">
+      <h4>Deine Reihenfolge · ${form.order.length} Übungen</h4><div id="ord">${ord}</div>
+      <h4>Weitere Übungen hinzufügen</h4><div id="lib">${libRows || '<div class="hintline">Alle Übungen sind schon gewählt.</div>'}</div>
+      <button class="save" id="saveplan">${editing ? "Änderungen speichern" : "Plan speichern"}</button>
+      ${editing ? '<button class="danger" id="delplan">Plan löschen</button>' : ""}
+      <div class="hint">Bereits absolvierte Einheiten bleiben unverändert — ein Plan beschreibt die Zukunft, nicht die Vergangenheit.</div></div>`);
     $("#pn").oninput = (ev) => { form.name = ev.target.value; };
-    app.querySelectorAll("[data-pick]").forEach((c) => c.onchange = () => {
-      const id = c.dataset.pick;
-      if (c.checked) form.sel[id] = suggest(LIB[id]); else delete form.sel[id];
+    $("#cancel").onclick = () => go("plaene");
+    app.querySelectorAll("[data-add]").forEach((b) => b.onclick = () => { const id = b.dataset.add; form.order.push(id); form.spec[id] = suggest(LIB[id]); renderForm(); });
+    app.querySelectorAll("[data-rm]").forEach((b) => b.onclick = () => { const id = b.dataset.rm; form.order = form.order.filter((x) => x !== id); delete form.spec[id]; renderForm(); });
+    app.querySelectorAll("[data-up]").forEach((b) => b.onclick = () => { const i = form.order.indexOf(b.dataset.up); if (i > 0) [form.order[i - 1], form.order[i]] = [form.order[i], form.order[i - 1]]; renderForm(); });
+    app.querySelectorAll("[data-down]").forEach((b) => b.onclick = () => { const i = form.order.indexOf(b.dataset.down); if (i < form.order.length - 1) [form.order[i + 1], form.order[i]] = [form.order[i], form.order[i + 1]]; renderForm(); });
+    app.querySelectorAll(".field button[data-ex]").forEach((b) => b.onclick = () => {
+      const id = b.dataset.ex, f = b.dataset.f, d = +b.dataset.d, s = form.spec[id];
+      const floor = f === "sets" ? 1 : 0;
+      s[f] = Math.max(floor, (s[f] || 0) + d);
       renderForm();
     });
-    app.querySelectorAll("input[data-ex]").forEach((i) => i.oninput = () => { form.sel[i.dataset.ex][i.dataset.f] = i.value === "" ? "" : +i.value; });
-    $("#cancel").onclick = () => go("plaene");
+    const del = $("#delplan");
+    if (del) del.onclick = async () => {
+      if (!confirm("Plan löschen? Bereits gespeicherte Sätze bleiben erhalten.")) return;
+      const { error } = await sb.from("plans").delete().eq("id", form.id);
+      if (error) return toast("Nicht gelöscht: " + error.message);
+      if (activeId === form.id) activeId = null;
+      form = null; await go("plaene");
+    };
     $("#saveplan").onclick = async () => {
-      const exs = EXS.filter((e) => form.sel[e.id]).map((e) => { const { sets, wMin, wMax, kg } = form.sel[e.id]; return { id: e.id, sets, wMin, wMax, kg }; });
+      const exs = form.order.map((id) => { const s = form.spec[id]; return { id, sets: s.sets, wMin: s.wMin, wMax: s.wMax, kg: s.kg }; });
       const bad = exs.find((x) => !(x.sets >= 1) || !(x.wMin >= 0) || !(x.wMax >= x.wMin) || !(x.kg >= 0));
       if (!form.name.trim()) return toast("Bitte einen Namen eingeben.");
       if (!exs.length) return toast("Mindestens eine Übung wählen.");
-      if (bad) return toast(`Ungültige Werte bei ${LIB[bad.id].name} (Wdh bis ≥ von, Sätze ≥ 1).`);
-      const { error } = await sb.from("plans").insert({ name: form.name.trim(), exercises: exs });
+      if (bad) return toast(`Ungültige Werte bei ${LIB[bad.id].name} (${LIB[bad.id].unit === "s" ? "Sek. bis ≥ von" : "Wdh bis ≥ von"}, Sätze ≥ 1).`);
+      const payload = { name: form.name.trim(), exercises: exs };
+      const { error } = form.id ? await sb.from("plans").update(payload).eq("id", form.id) : await sb.from("plans").insert(payload);
       if (error) return toast("Nicht gespeichert: " + error.message);
-      await go("plaene");
+      form = null; await go("plaene");
     };
   }
 
+  // ---------- Fortschritt ----------
+  // Regel (bestätigt): <2 Sessions je Übung => kein Chart/Verlauf. 1 Session => reine Istwerte als Textzeile
+  // + exakter Hinweistext. 0 Sessions => ehrliche "keine Daten"-Meldung, kein erfundener Wert.
+  // Session = distinktes Trainingsdatum, NICHT Anzahl Sätze (siehe logic.js sessionsFromRows).
+  function usedExerciseIds() {
+    const ids = new Set();
+    (data.progress || []).forEach((r) => ids.add(r.exercise));
+    data.plans.forEach((p) => p.exs.forEach((e) => ids.add(e.id)));
+    return EXS.filter((e) => ids.has(e.id)).map((e) => e.id);
+  }
+  function sessionLine(e, sess) {
+    const vals = sess.sets.map((s) => s.reps).join(" / ");
+    const w = e.unit === "s" ? "" : ` @ ${fmtW(+sess.sets[0].weight)} kg`;
+    return `${shortDate(sess.date)}: ${vals} ${unitLabel(e)}${w}`;
+  }
+  function renderExProgress(id) {
+    const e = LIB[id];
+    const r = LOGIC.sessionsFromRows(data.progress || [], id);
+    let body;
+    if (r.count === 0) {
+      body = `<div class="hintline">Noch keine bestätigten Sätze für ${esc(e.name)} — hier erscheint etwas, sobald du den ersten ✓-Satz einträgst.</div>`;
+    } else if (r.count === 1) {
+      body = `<div class="progrow">${sessionLine(e, r.sessions[0])}</div>
+        <div class="hintline">Ab der zweiten Einheit siehst du hier den Verlauf.</div>`;
+    } else {
+      body = `<div class="prog-list">${r.sessions.slice().reverse().map((s) => `<div class="progrow">${sessionLine(e, s)}</div>`).join("")}</div>`;
+    }
+    return `<div class="prow-ex" data-pex="${id}"><div class="rname">${esc(e.name)}<span class="rmeta" style="display:inline;margin-left:6px">${esc(e.muscle)}</span></div>${body}</div>`;
+  }
+  function renderFortschritt() {
+    const ids = usedExerciseIds();
+    const list = ids.length ? ids.map(renderExProgress).join("") : `<div class="hintline">Noch keine Übung trainiert — Fortschritt erscheint, sobald die erste Einheit bestätigt ist.</div>`;
+    shell(`<header><h1>Fortschritt</h1><div class="sub">Basis: bestätigte ✓-Sätze der letzten 12 Monate</div></header><div class="pad">${list}</div>`);
+  }
+
   // ---------- Heute (Satz-Eingabe) ----------
-  const summary = (e) => { // Ist-Zeile: "2×17 kg · 10 / 10 / 8"
+  const summary = (e) => { // Ist-Zeile: "2×17 kg · 10 / 10 / 8" bzw. bei Sekunden "30 / 35 / 30 s"
     const d = st[e.id].sets.filter((s) => s.done); if (!d.length) return null;
+    if (e.unit === "s") return `${st[e.id].sets.map((s) => (s.done ? s.reps : "–")).join(" / ")} s`;
     const kgs = [...new Set(d.map((s) => fmtW(s.kg)))].join("/");
     return `${e.pair ? "2×" : ""}${kgs} kg · ${st[e.id].sets.map((s) => (s.done ? s.reps : "–")).join(" / ")}`;
   };
-  const lastLine = (e) => { const { last } = st[e.id]; return last ? `zuletzt ${last.map((x) => x.reps).join(" / ")} @ ${fmtW(+last[0].weight)} kg` : "noch kein Ist"; };
+  const lastLine = (e) => {
+    const { last } = st[e.id];
+    if (!last) return "noch kein Ist";
+    if (e.unit === "s") return `zuletzt ${last.map((x) => x.reps).join(" / ")} s`;
+    return `zuletzt ${last.map((x) => x.reps).join(" / ")} @ ${fmtW(+last[0].weight)} kg`;
+  };
   const exDone = (e) => st[e.id].sets.every((s) => s.done);
 
   function renderHeute() {
     const p = plan(activeId);
+    if (!p) { shell(`<div class="pad"><div class="hintline">Kein Plan ausgewählt — starte einen Plan in der Übersicht oder bei den Plänen.</div></div>`); return; }
     const totalSets = planSets(p), doneSets = p.exs.reduce((a, e) => a + st[e.id].sets.filter((s) => s.done).length, 0);
     shell(`<header><h1>${esc(planTitle(p))}</h1>
         <div class="sub">${dateLabel} · ${p.exs.length} Übungen · ${p.exs.filter(exDone).length} / ${p.exs.length} erledigt</div>
@@ -285,43 +459,52 @@
     const sum = summary(e), full = exDone(e), open = openId === e.id;
     const flag = e.flag ? `<span class="flag ${e.flag.kind}">${e.flag.text}</span>` : "";
     const tick = sum ? `<div class="tick${full ? "" : " pending"}">${full ? "✓ " : ""}${sum}</div>` : `<div class="tick last">${lastLine(e)}</div>`;
+    const loadCell = e.unit === "s" ? `${e.wMax}<small>SEK</small>` : `${e.pair ? "2×" : ""}${fmtW(e.kg)}<small>KG</small>`; // nie stillschweigend "0 kg" bei Zeit-Übungen
     return `<div class="row${open ? " open" : ""}" data-ex="${e.id}">
-      <div class="head"><div><div class="rname">${e.name}${flag}</div>
-        <div class="rmeta">${e.sets} × ${e.wMin}–${e.wMax}${e.sides ? " / Seite" : ""} · ${e.muscle}</div>${tick}</div>
-        <div class="rload">${e.pair ? "2×" : ""}${fmtW(e.kg)}<small>KG</small></div><div class="fslot"></div></div>
+      <div class="head"><div><div class="rname">${esc(e.name)}${flag}</div>
+        <div class="rmeta">${e.sets} × ${e.wMin}–${e.wMax}${e.unit === "s" ? " s" : e.sides ? " / Seite" : ""} · ${esc(e.muscle)}</div>${tick}</div>
+        <div class="rload">${loadCell}</div><div class="fslot"></div></div>
       ${open ? detailHtml(e) : ""}</div>`;
   }
 
   function detailHtml(e) {
-    const demo = e.figure && FIG[e.figure] ? `<div class="demo"><svg class="stage" viewBox="0 0 104 104" data-zoom="${e.figure}">${FIG[e.figure]}</svg>
-      <div class="txt"><b>Endposition · Tempo ${e.tempo}</b>${e.tempoText}
-      <div class="ctrl"><a href="https://modusx.de/fitness-uebungen/" target="_blank" rel="noopener">Erklärung ↗</a></div></div></div>` : "";
-    const hints = e.hints ? `<h4>Ausführung</h4><ol class="hints">${e.hints.map((h) => `<li>${h}</li>`).join("")}</ol>` : "";
+    const demo = e.figure && FIG[e.figure] ? `<div class="demo"><svg class="stage anim" viewBox="0 0 104 104" data-zoom="${e.figure}" style="--demo-loop:${tempoSeconds(e.tempo)}s">${FIG[e.figure]}</svg>
+      <div class="txt"><b>Tempo ${esc(e.tempo || "—")}</b>${esc(e.tempoText || "")}
+      <div class="ctrl"><a href="${esc(e.explain || "https://modusx.de/fitness-uebungen/")}" target="_blank" rel="noopener">Erklärung ↗</a></div></div></div>` : "";
+    const hints = e.hints ? `<h4>Ausführung</h4><ol class="hints">${e.hints.map((h) => `<li>${esc(h)}</li>`).join("")}</ol>` : "";
+    const isSec = e.unit === "s";
     const rows = st[e.id].sets.map((s, k) => `
       <div class="setrow${s.done ? " ok" : ""}" data-k="${k}">
         <div class="setno">${k + 1}</div>
-        <div class="field${s.reps < e.wMin || s.reps > e.wMax ? " devmark" : ""}"><button data-f="reps" data-d="-1">−</button><span class="val">${s.reps}</span><span class="unit">Wdh</span><button data-f="reps" data-d="1">+</button></div>
-        <div class="field${s.kg !== e.kg ? " devmark" : ""}"><button data-f="kg" data-d="-1">−</button><span class="val">${fmtW(s.kg)}</span><span class="unit">kg</span><button data-f="kg" data-d="1">+</button></div>
+        <div class="field${s.reps < e.wMin || s.reps > e.wMax ? " devmark" : ""}"><button data-f="reps" data-d="-1">−</button><span class="val">${s.reps}</span><span class="unit">${unitLabel(e)}</span><button data-f="reps" data-d="1">+</button></div>
+        ${isSec ? '<div class="field" style="visibility:hidden"></div>' : `<div class="field${s.kg !== e.kg ? " devmark" : ""}"><button data-f="kg" data-d="-1">−</button><span class="val">${fmtW(s.kg)}</span><span class="unit">kg</span><button data-f="kg" data-d="1">+</button></div>`}
         <button class="done" aria-label="Satz ${k + 1} erledigt">✓</button></div>`).join("");
     const { lastDate, last } = st[e.id];
-    const hint = last ? `Vorbelegt mit dem <b>letzten Ist</b> (${lastDate.slice(8)}.${lastDate.slice(5, 7)}.: ${last.map((x) => x.reps).join(" / ")}).` : `Noch kein Ist — Vorbelegung aus dem Plan.`;
+    const hint = last ? `Vorbelegt mit dem <b>letzten Ist</b> (${lastDate.slice(8)}.${lastDate.slice(5, 7)}.: ${last.map((x) => x.reps).join(" / ")}${isSec ? " s" : ""}).` : `Noch kein Ist — Vorbelegung aus dem Plan.`;
+    const target = isSec ? `${e.sets} × ${e.wMin}–${e.wMax} s (Körpergewicht)` : `${e.sets} × ${e.wMin}–${e.wMax} @ ${e.pair ? "2×" : ""}${fmtW(e.kg)} kg`;
     return `<div class="detail">${demo}${hints}
-      <h4>Sätze eintragen · <em>Ziel ${e.sets} × ${e.wMin}–${e.wMax} @ ${e.pair ? "2×" : ""}${fmtW(e.kg)} kg</em></h4>${rows}
+      <h4>Sätze eintragen · <em>Ziel ${target}</em></h4>${rows}
       <div class="hintline">${hint} Orange = außerhalb der Plan-Spanne — markiert, nicht bewertet. Ein Satz zählt erst mit ✓.</div>
-      <button class="allbtn">Alle ${e.sets} wie geplant ✓ &nbsp;${e.wMax} @ ${e.pair ? "2×" : ""}${fmtW(e.kg)} kg</button>
+      <button class="allbtn">Alle ${e.sets} wie geplant ✓ &nbsp;${e.wMax}${isSec ? " s" : ` @ ${e.pair ? "2×" : ""}${fmtW(e.kg)} kg`}</button>
       ${e.note ? `<div class="note">${e.note}</div>` : ""}</div>`;
+  }
+  // Tempo-Text wie "2-1-2" (Sekunden je Phase) in eine CSS-Animationsdauer übersetzen; "halten" (z. B. Plank) = 2.4s Standard-Loop.
+  function tempoSeconds(tempo) {
+    if (!tempo) return 2.4;
+    const parts = tempo.split("-").map(Number).filter((n) => !Number.isNaN(n));
+    return parts.length ? parts.reduce((a, b) => a + b, 0) : 2.4;
   }
 
   function wireHeute(p) {
     $("#out").onclick = () => sb.auth.signOut();
     app.querySelectorAll(".head").forEach((h) => h.onclick = () => { const id = h.closest(".row").dataset.ex; openId = openId === id ? null : id; render(); });
-    app.querySelectorAll("[data-zoom]").forEach((s) => s.onclick = () => { $("#bigsvg").innerHTML = FIG[s.dataset.zoom]; $("#big").classList.add("on"); });
+    app.querySelectorAll("[data-zoom]").forEach((s) => s.onclick = () => { $("#bigsvg").innerHTML = FIG[s.dataset.zoom]; $("#bigsvg").classList.add("anim"); $("#bigsvg").style.setProperty("--demo-loop", s.style.getPropertyValue("--demo-loop")); $("#big").classList.add("on"); });
     app.querySelectorAll(".row.open").forEach((row) => {
       const e = p.exs.find((x) => x.id === row.dataset.ex);
       row.querySelectorAll(".setrow").forEach((r) => {
         const k = +r.dataset.k, s = st[e.id].sets[k];
         r.querySelectorAll(".field button").forEach((b) => b.onclick = () => {
-          const f = b.dataset.f, step = f === "kg" ? 2 : 1; // kg in 2er-Schritten wie im Mockup
+          const f = b.dataset.f, step = f === "kg" ? 2 : (e.unit === "s" ? 5 : 1); // Sekunden in 5er-, kg in 2er-Schritten
           mutate(e, k, { [f]: Math.max(0, s[f] + (+b.dataset.d) * step) });
         });
         r.querySelector(".done").onclick = () => mutate(e, k, { done: !s.done });
@@ -335,17 +518,32 @@
   // ---------- Start ----------
   async function boot() {
     const { data: s } = await sb.auth.getSession();
-    if (!s.session) return showLogin();
+    if (!s.session) return showLogin({ mode: "password" });
+    currentUserId = s.session.user.id; currentEmail = s.session.user.email;
     app.innerHTML = `<div class="login"><p>Lade …</p></div>`;
     try { activeId = null; await refresh(); tab = "uebersicht"; render(); }
     catch (err) { app.innerHTML = `<div class="login"><h1>GymBro</h1><p>Laden fehlgeschlagen: ${esc(err.message)}</p></div>`; }
   }
-  // supabase-js feuert SIGNED_IN auch beim bloßen Zurückkehren in den Tab — nur beim echten Login neu starten,
-  // sonst gingen Tab-Stand und noch nicht bestätigte Eingaben verloren.
+  // supabase-js feuert SIGNED_IN auch beim bloßen Zurückkehren in den Tab — nur beim echten Login/Kontowechsel
+  // neu starten, sonst gingen Tab-Stand und noch nicht bestätigte Eingaben verloren. PASSWORD_RECOVERY zeigt
+  // immer den "neues Passwort setzen"-Screen, unabhängig vom booted-Stand (kommt per Link von außen).
+  // Mehrbenutzer: wechselt die Session auf eine ANDERE user_id (z. B. Abmelden + sofortiges Anmelden als
+  // jemand anders im selben Tab), wird der komplette Client-Zustand verworfen, bevor neu geladen wird —
+  // sonst könnten kurz Plan-/Satz-Daten des vorherigen Kontos sichtbar bleiben.
   let booted = false;
-  sb.auth.onAuthStateChange((ev) => {
-    if (ev === "SIGNED_OUT") { booted = false; showLogin(); }
-    else if (ev === "SIGNED_IN" && !booted) { booted = true; boot(); }
+  sb.auth.onAuthStateChange((ev, sess) => {
+    if (ev === "PASSWORD_RECOVERY") { recoveryMode = true; showSetPassword(); return; }
+    if (ev === "SIGNED_OUT") { gen++; resetState(); booted = false; if (!recoveryMode) showLogin({ mode: "password" }); return; }
+    if (ev === "SIGNED_IN" && !recoveryMode) {
+      const incomingId = sess && sess.user && sess.user.id;
+      if (booted && incomingId && incomingId === currentUserId) return; // selbe Person, z. B. Tab-Refokus — kein Reset
+      gen++; resetState(); booted = true; boot();
+    }
   });
   booted = true; boot();
+
+  // Test-Hook: ausschließlich für isolierte Browser-Tests mit Mock-Supabase (siehe test/). Kein Effekt in Produktion,
+  // da echte Seiten diesen Namespace nicht abfragen.
+  window.__GYMBRO_TEST__ = { go, start, render, openEditor,
+    get: () => ({ data, st, activeId, tab, form, openId }) };
 })();

@@ -16,9 +16,10 @@
     border:1px solid var(--line-strong);border-radius:var(--r-sm);height:34px;padding:0 12px;
     font-size:13px;font-weight:600;cursor:pointer}
 
-  header{padding:var(--s-4) var(--s-4) var(--s-3);border-bottom:1px solid var(--line)}
+  header{padding:var(--s-4) var(--s-4) var(--s-3);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:flex-start;gap:var(--s-3)}
   header h1{font:var(--t-title);letter-spacing:-.01em}
   header .sub{font:var(--t-meta);color:var(--fg-muted);margin-top:var(--s-1)}
+  .back{background:none;border:none;color:var(--accent);font-size:15px;font-weight:700;cursor:pointer;padding:0;white-space:nowrap;min-height:var(--hit-min)}
   .bar{margin-top:var(--s-3);height:5px;border-radius:3px;background:var(--line);overflow:hidden}
   .bar i{display:block;height:100%;width:33%;background:var(--ok);transition:width var(--dur-med) var(--ease)}
 
@@ -40,7 +41,7 @@
   .detail{display:none;padding-top:var(--s-3)}
   .row.open .detail{display:block}
 
-  /* ---------- Bewegung: statische Zeichnung + Tempo ---------- */
+  /* ---------- Bewegung: eigene schematische Strichzeichnung + CSS-Loop-Animation ---------- */
   .demo{display:grid;grid-template-columns:104px 1fr;gap:var(--s-3);align-items:center;
         background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);
         padding:var(--s-2);margin-bottom:var(--s-3)}
@@ -53,6 +54,19 @@
   svg .fig{stroke:var(--figure);stroke-width:5;stroke-linecap:round;fill:none}
   svg .body{stroke:var(--figure-body);stroke-width:5;stroke-linecap:round;fill:none}
   svg .wt{fill:var(--figure)}
+  svg .floor{stroke:var(--line-strong);stroke-width:3}
+  /* Eigene, schematische Loop-Animation (kein Fremd-Asset): Gewicht/Arme pendeln zwischen Start-/Endpose,
+     Dauer kommt aus der Tempo-Angabe der Übung (--demo-loop, inline gesetzt). prefers-reduced-motion stoppt
+     global in tokens.css (animation-duration:.01ms). */
+  .stage.anim .armL, .stage.anim .armR, .stage.anim .wt { animation: demo-swing var(--demo-loop, 2.4s) var(--ease) infinite; transform-origin: center; }
+  .stage.anim .armR, .stage.anim .legR { animation-delay: calc(var(--demo-loop, 2.4s) / -2); }
+  .stage.anim .floor { animation: none; }
+  @keyframes demo-swing{
+    0%{transform:translateY(0) scale(1);opacity:1}
+    45%{transform:translateY(-6px) scale(1.03);opacity:1}
+    55%{transform:translateY(-6px) scale(1.03);opacity:1}
+    100%{transform:translateY(0) scale(1);opacity:1}
+  }
   .big{position:fixed;inset:0;background:rgba(5,8,11,.86);display:none;place-items:center;z-index:20}
   .big.on{display:grid}
   .big svg{width:min(78vw,340px);height:auto;background:var(--surface);border-radius:18px;padding:12px}
@@ -90,35 +104,48 @@
     border:1px solid var(--accent);background:transparent;color:var(--accent);font-size:15px;font-weight:700;cursor:pointer}
   .note{margin-top:var(--s-3);font:var(--t-meta);color:var(--warn);background:var(--warn-bg);
         border-radius:var(--r-sm);padding:var(--s-2) var(--s-3)}
-  .logline{margin-top:var(--s-3);font-family:ui-monospace,Consolas,monospace;font-size:11.5px;
-    color:var(--fg-muted);background:var(--surface);border:1px dashed var(--line-strong);
-    border-radius:var(--r-sm);padding:var(--s-2) var(--s-3);word-break:break-word}
 
   .foot{margin-top:auto;border-top:1px solid var(--line);padding:var(--s-3) var(--s-4) var(--s-4)}
   .sum{display:flex;justify-content:space-between;font:var(--t-meta);color:var(--fg-muted)}
   .sum b{color:var(--fg);font-size:15px;font-variant-numeric:tabular-nums}
   .save{margin-top:var(--s-3);width:100%;height:50px;border:none;border-radius:var(--r-md);
         background:var(--accent);color:var(--on-accent);font-size:16px;font-weight:700;cursor:pointer}
+  .danger{margin-top:var(--s-2);width:100%;min-height:var(--hit-min);border-radius:var(--r-md);
+          border:1px solid var(--line-strong);background:transparent;color:var(--warn);font-size:14px;font-weight:700;cursor:pointer}
+  .hint{font:var(--t-meta);color:var(--fg-muted);margin-top:var(--s-2)}
 
-  /* ---------- Login / Status ---------- */
-  .login{padding:var(--s-5) var(--s-4);display:flex;flex-direction:column;gap:var(--s-3)}
-  .login h1{font:var(--t-title)}
-  .login p{font:var(--t-meta);color:var(--fg-muted)}
-  .login input{height:var(--hit-min);border:1px solid var(--line-strong);border-radius:var(--r-sm);
+  /* ---------- Login (E-Mail+Passwort primär, Magic Link Rückfall, Reset als Textlink) ---------- */
+  .login{flex:1;display:flex;flex-direction:column;justify-content:center;padding:var(--s-6) var(--s-4);gap:0}
+  .brand{font-size:28px;font-weight:700;letter-spacing:-.02em;text-align:center}
+  .brandsub{font:var(--t-meta);color:var(--fg-muted);text-align:center;margin-top:var(--s-1);margin-bottom:var(--s-5)}
+  .login label.f{display:block;font:var(--t-label);letter-spacing:.08em;text-transform:uppercase;color:var(--fg-muted);margin:var(--s-3) 0 var(--s-2)}
+  .login .txt,.txt{width:100%;height:var(--hit-min);border:1px solid var(--line-strong);border-radius:var(--r-sm);
     background:var(--surface-2);color:var(--fg);font-size:16px;padding:0 var(--s-3)}
-  .login .save{margin-top:0}
+  .txt:focus{outline:2px solid var(--accent);outline-offset:2px}
+  .pwrow{position:relative}
+  .pwrow .eye{position:absolute;right:4px;top:0;height:var(--hit-min);width:var(--hit-min);background:none;
+              border:none;color:var(--fg-muted);font-size:13px;cursor:pointer}
+  .primary{margin-top:var(--s-4);width:100%;height:50px;border:none;border-radius:var(--r-md);
+           background:var(--accent);color:var(--on-accent);font-size:16px;font-weight:700;cursor:pointer}
+  .ghost{margin-top:var(--s-2);width:100%;min-height:var(--hit-min);border-radius:var(--r-md);
+         border:1px solid var(--line-strong);background:transparent;color:var(--fg);font-size:15px;font-weight:700;cursor:pointer}
+  .link{display:block;margin-top:var(--s-3);text-align:center;color:var(--accent);font-size:14px;font-weight:700;
+        text-decoration:none;min-height:var(--hit-min);line-height:var(--hit-min)}
+  .err{margin-top:var(--s-3);font:var(--t-meta);color:var(--warn);background:var(--warn-bg);border-radius:var(--r-sm);padding:var(--s-2) var(--s-3)}
   .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);max-width:92vw;z-index:30;
     background:var(--warn-bg);color:var(--warn);border:1px solid var(--warn);border-radius:var(--r-sm);
     padding:var(--s-2) var(--s-3);font:var(--t-meta);display:none}
   .toast.on{display:block}
   .tick.pending,.tick.last{color:var(--fg-muted);font-weight:400}
+  .acct{display:flex;justify-content:space-between;align-items:center;margin-top:var(--s-2);gap:var(--s-2)}
+  .acct span{font:var(--t-meta);color:var(--fg-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .linkbtn{background:none;border:none;color:var(--fg-muted);font-size:12px;text-decoration:underline;cursor:pointer;margin-top:var(--s-2)}
 
   /* ---------- v2: Rahmen, Tab-Leiste, Übersicht, Pläne ---------- */
   .phone{min-height:calc(100vh - 60px)}
   .screen{flex:1;display:flex;flex-direction:column}
   .pad{padding:var(--s-4)}
-  .tabs{position:sticky;bottom:0;display:grid;grid-template-columns:repeat(3,1fr);height:56px;
+  .tabs{position:sticky;bottom:0;display:grid;grid-template-columns:repeat(4,1fr);height:56px;
     background:var(--surface);border-top:1px solid var(--line)}
   .tabs button{background:none;border:none;color:var(--fg-muted);font-size:11.5px;font-weight:700;cursor:pointer;
     display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
@@ -141,18 +168,32 @@
   .dashed{width:100%;min-height:var(--hit-min);margin-top:var(--s-4);border:1.5px dashed var(--line-strong);border-radius:var(--r-md);
     background:transparent;color:var(--accent);font-size:15px;font-weight:700;cursor:pointer}
   .dashed:disabled{color:var(--fg-muted);cursor:default}
-  .txt{width:100%;height:var(--hit-min);border:1px solid var(--line-strong);border-radius:var(--r-sm);background:var(--surface-2);
-    color:var(--fg);font-size:16px;padding:0 var(--s-3)}
-  .pickwrap{border-bottom:1px solid var(--line);padding:var(--s-1) 0}
-  .pick{display:flex;align-items:center;gap:var(--s-3);min-height:var(--hit-min);cursor:pointer;font:var(--t-item)}
-  .pick input{width:22px;height:22px;accent-color:var(--accent);flex:none}
-  .pick small{display:block;font:var(--t-meta);color:var(--fg-muted)}
-  .spec{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--s-2);padding:0 0 var(--s-3) 34px}
-  .spec label{font:var(--t-meta);color:var(--fg-muted);display:flex;flex-direction:column;gap:2px}
-  .spec input{height:var(--hit-min);width:100%;border:1px solid var(--line-strong);border-radius:var(--r-sm);background:var(--surface);
-    color:var(--fg);font-size:16px;font-weight:700;padding:0 var(--s-2);font-variant-numeric:tabular-nums}
-  .spec .hintline{grid-column:1/-1}
   .pad .save{margin-top:var(--s-4)}
+
+  /* ---------- v3: Plan-Editor (ein Formular für Anlegen/Bearbeiten) ---------- */
+  .ord{display:grid;grid-template-columns:22px 1fr 40px 40px 40px;gap:6px;align-items:center;
+       padding:var(--s-2) 0;border-bottom:1px solid var(--line)}
+  .onum{font:var(--t-meta);font-weight:700;color:var(--fg-muted);text-align:center;font-variant-numeric:tabular-nums}
+  .oname{font:var(--t-item);line-height:1.2}
+  .ometa{font:var(--t-meta);color:var(--fg-muted);margin-top:2px}
+  .mv{width:40px;height:var(--hit-min);border-radius:var(--r-sm);border:1px solid var(--line-strong);
+      background:var(--surface-2);color:var(--fg);font-size:16px;cursor:pointer}
+  .mv:disabled{color:var(--line-strong);cursor:default}
+  .rm{width:40px;height:var(--hit-min);border-radius:var(--r-sm);border:1px solid var(--line-strong);
+      background:var(--surface-2);color:var(--fg-muted);font-size:16px;cursor:pointer}
+  .spans{grid-column:2/6;display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:var(--s-2);padding:0 0 var(--s-2)}
+  .spans .field{height:40px}
+  .spans .field button{width:28px}
+  .spans label.f{font:var(--t-meta);text-transform:none;letter-spacing:0;color:var(--fg-muted)}
+  .lib{display:grid;grid-template-columns:var(--hit-min) 1fr;gap:var(--s-2);align-items:center;
+       padding:var(--s-2) 0;border-bottom:1px solid var(--line)}
+  .add{width:var(--hit-min);height:var(--hit-min);border-radius:var(--r-sm);border:1px solid var(--line-strong);
+       background:var(--surface-2);color:var(--accent);font-size:20px;font-weight:700;cursor:pointer}
+
+  /* ---------- v3: Fortschritt ---------- */
+  .prow-ex{padding:var(--s-3) 0;border-bottom:1px solid var(--line)}
+  .prog-list{margin-top:var(--s-2);display:flex;flex-direction:column;gap:4px}
+  .progrow{font:var(--t-meta);color:var(--fg);font-variant-numeric:tabular-nums;padding:2px 0}
 </style>
 </head>
 <body>
@@ -163,6 +204,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="config.js"></script>
+<script src="logic.js"></script>
 <script src="plan.js"></script>
 <script src="app.js"></script>
 </body>

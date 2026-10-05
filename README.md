@@ -63,3 +63,133 @@ Lokal testen: `config.js` füllen, dann `npx serve .` (Magic Link braucht http(s
 2. **E-Mail + Passwort-Login** (zusätzlich zu Magic Link, gleiches Konto, keine neue Registrierung, keine Historie verloren), inkl. "Passwort vergessen". Oliver nutzt weiter seine bestehende E-Mail als Login, kein freier Benutzername.
 
 Zurückgestellt (bewusst nicht in v3): Punkt 3 (Animationen) und 4 (Fortschrittsseite) aus v2 sind noch offen und haben Vorrang vor v3, falls Zeit knapp wird.
+
+## v3-Umsetzung (2026-10-05) — Status: implementiert, lokal getestet, NICHT deployed
+
+Alle zu diesem Zeitpunkt freigegebenen Punkte sind umgesetzt: Plan-Editor (Anlegen/Bearbeiten in einem
+Formular), E-Mail+Passwort-Login (gleiches Konto, Magic-Link-Rückfall, Passwort-Reset), Animationen für
+jede Bibliotheksübung (eigene schematische SVGs, siehe `plan.js` → `GYMBRO_FIGURES`, kein MODUSX-Bildmaterial
+übernommen) und die Fortschrittsseite inkl. der unten dokumentierten Sichtbarkeitsregel.
+
+### Dateien (neu/geändert)
+- `logic.js` — reine, DOM-freie Kernlogik (Volumen, Sekunden-Handling, Fortschritt-Sessionszählung,
+  Plan-Rotation, Satzvorschlag). Läuft identisch in Node (Tests) und Browser (`window.GYMBRO_LOGIC`).
+- `app.js` — komplett überarbeitet: Übersicht/Heute/Pläne/Editor/Fortschritt/Login, Mehrbenutzer-Härtung.
+- `plan.js` — Bibliothek um `figure`/`explain`/`hints` ergänzt, Builtin-Pläne A/B/C generalisiert (Plan B
+  „Unterkörper + Core“ und Plan C „Ganzkörper“ aus Miras Vorlage ergänzt, geteilte Übungs-IDs mit Plan A).
+- `index.html` — Styles für Editor, Login, Fortschritt, Tab-Leiste, Kontoanzeige, Bewegungsanimation.
+- `test/` — `logic.test.js` (13 reine Logiktests), `dom.test.js` (12 Browser-Interaktionstests via jsdom
+  gegen die echte `app.js`), `mock-supabase.js` + `test-config.js` (als Test-Fixture gekennzeichnet, keine
+  echten Daten/Netzwerkaufrufe), `harness.js` (jsdom-Bootstrap). `npm test` → 25/25 grün.
+
+### Plan-Editor
+Ein Formular für Neu/Bearbeiten (`openEditor(id|null)`). Oben nummerierte, per ↑/↓ sortierbare Auswahl
+(Trefferfläche ≥ 46 px, `--hit-min` Token), darunter die restliche Bibliothek zum Hinzufügen (Entfernen
+gibt die Übung zurück in die Bibliothek). Editierbar je Übung: Sätze, Wdh-/Sekundenspanne, Gewicht —
+Sekunden-Übungen (z. B. Plank) zeigen bewusst KEIN Gewichtsfeld, sondern einen expliziten Hinweis
+„Körpergewicht — kein Gewichtsfeld“ (nie stillschweigend als 0 kg geführt). Bearbeiten ändert nur
+künftige Einheiten; bestehende `sets`-Zeilen bleiben unverändert (siehe Test „Editor: Bearbeiten … ändert
+NICHT die bereits gespeicherte Satz-Historie“).
+
+### Login (E-Mail + Passwort, gleiches Konto)
+Primäraktion ist Passwort (`signInWithPassword`), Magic Link ist umrandeter Rückfallweg, „Passwort
+vergessen“ ein Textlink. Fehlermeldungen sind generisch („E-Mail oder Passwort stimmt nicht.“) — verraten
+nie, welches Feld falsch war. Passwort setzen aus angemeldeter Session läuft über den
+`PASSWORD_RECOVERY`-Event (`supabase.auth.onAuthStateChange`) → `updateUser({ password })`, ausgelöst durch
+`resetPasswordForEmail`. Es gibt **kein** `signUp()` — nur das bestehende Konto, keine neue Registrierung,
+keine Historie geht verloren. SDK-Methoden gegen die offizielle Supabase-Doku geprüft (`signInWithPassword`,
+`resetPasswordForEmail`, `updateUser`, `onAuthStateChange`/`PASSWORD_RECOVERY`, `signInWithOtp` mit
+`shouldCreateUser`).
+
+### Fortschrittsseite — Sichtbarkeitsregel (vom Nutzer ausdrücklich freigegeben, verbindlich)
+Zählt **distinkte Trainingstage (Sessions) je Übung**, nicht die Anzahl Sätze:
+- **0 Sessions:** ehrliche „Noch keine bestätigten Sätze …“-Meldung. Kein erfundener Wert, kein Platzhalter-Chart.
+- **1 Session:** die tatsächlich erfassten Istwerte dieser einen Einheit als Textzeile, plus exakt:
+  „Ab der zweiten Einheit siehst du hier den Verlauf.“ (wortgleich, nicht paraphrasiert)
+- **≥ 2 Sessions:** Verlaufsliste (chronologisch), ein „Chart“ im Sinn der App ist diese Textliste, kein
+  separates Grafik-Widget.
+Implementiert in `logic.js::sessionsFromRows()` (reine Funktion, 5 dedizierte Tests) und
+`app.js::renderExProgress()`. Regressionstests für 0/1/2 Sessions: `test/logic.test.js` (Funktionsebene)
+und `test/dom.test.js` → „Fortschritt: 0/1/2 Sessions …“ (echtes DOM, bestätigt alle drei Zustände inkl.
+des exakten Hinweistexts).
+
+## Mehrbenutzer (2026-10-05) — Status: implementiert & getestet (Client), Policies verifiziert, Produktionsauth PENDING
+
+Umstieg von "1 Nutzer" auf echte, getrennte Konten. **Keine Freigabe-/Coaching-/Social-Features** — jedes
+Konto sieht ausschließlich seine eigenen Pläne/Sätze/Historie. Die gemeinsamen Builtin-Vorlagen A/B/C sind
+Code (siehe `plan.js`), keine personenbezogenen Daten — sie sind für jedes Konto identisch sichtbar, aber
+die *Historie* dazu ist pro Konto komplett getrennt.
+
+### Was bereits vor dieser Änderung richtig war (verifiziert, nicht neu gebaut)
+`supabase/schema.sql` und `schema-v2.sql` hatten für `sets` UND `plans` von Anfang an korrekte RLS-Policies
+(`using (user_id = auth.uid())` für select/update/delete, `with check (user_id = auth.uid())` für
+insert/update) — das Datenmodell war technisch nie Single-User, nur die Nutzung war es. **Keine
+Schema-Migration nötig**, nur durch Lesen der SQL-Dateien verifiziert (nicht gegen eine echte lokale
+Postgres-Instanz; siehe „Offene Verifikation“ unten).
+
+### Client-seitige Härtung (neu, `app.js`)
+- **Zustand wird bei Abmelden UND bei Kontowechsel vollständig geleert** (`resetState()`): Pläne, Sätze,
+  aktiver Plan, Editor-Formular, Fortschrittsdaten — nichts überlebt einen Accountwechsel im selben Tab.
+- **Generation-Zähler (`gen`)** schützt vor noch laufenden Netzwerkantworten eines VORHERIGEN Kontos: wird
+  währenddessen abgemeldet/gewechselt, wird das Ergebnis beim Zurückkommen verworfen statt ins neue Konto
+  geschrieben (`load()`/`loadProgress()` prüfen `myGen !== gen`).
+- **Übersicht zeigt die angemeldete E-Mail + „Abmelden“** direkt im Header (kein separater Profil-Screen
+  nötig, Mira-Vorgabe). Nach Abmelden ist diese Anzeige sofort geleert.
+- **Magic Link ohne Auto-Signup:** `signInWithOtp` wird mit `options.shouldCreateUser:false` aufgerufen
+  (offizielle Supabase-Doku „Passwordless email logins“) — eine unbekannte E-Mail bekommt dieselbe
+  generische Antwort wie eine bekannte (kein User-Enumeration-Leak) und KEIN neues Konto.
+- **Kein Signup-UI** irgendwo in der App (Test prüft das explizit gegen den gerenderten Login-DOM).
+
+### Tests (`test/mock-supabase.js`, `test/dom.test.js`)
+Der Mock bildet jetzt **mehrere Konten** ab und filtert `plans`/`sets` serverseitig-analog auf das jeweils
+eingeloggte Konto (`accountForSession()`) — bewusst als RLS-Simulation benannt, NICHT als Ersatz für echte
+Postgres-Policy-Tests. Deterministische Zwei-Konten-Tests (alle grün, siehe „Mehrbenutzer: …“ in
+`test/dom.test.js`):
+1. Frisches zweites Konto sieht keinen Plan/keine Historie des ersten Kontos, aber die gemeinsamen
+   Builtin-Vorlagen A/B/C bleiben sichtbar.
+2. Abmelden + Anmelden als anderes Konto im selben Tab hinterlässt keine Reste des vorherigen Kontos im DOM
+   oder im In-Memory-Zustand.
+3. Ein `insert` (neuer Plan) landet nachweislich nur im Datensatz des anfragenden Kontos, nie beim anderen.
+
+**Wichtig — ehrlich benannte Grenze:** Diese drei Tests beweisen die Isolation GEGEN DEN MOCK, der die
+RLS-Policies *nachbildet*. Sie sind kein Beweis, dass die echten Postgres-Policies im Supabase-Projekt so
+funktionieren wie gelesen — dafür wäre ein Lauf gegen eine echte/lokale Postgres-Instanz nötig (siehe
+„Offene Verifikation“). Die Browser-Automatisierung für einen Live-Vertrauens-Check gegen das echte
+Supabase-Projekt war in dieser Sitzung nicht verfügbar (Tool-Timeout, siehe „Blocker“ in der Zusammenfassung).
+
+### Offene Verifikation (nicht ausgeführt, kein Produktionszugriff in dieser Sitzung)
+- Echte RLS-Policy-Tests gegen eine lokale/Staging-Postgres (z. B. `supabase start` + `pgTAP` oder zwei
+  echte Testnutzer + zwei anon-Clients, die gegenseitig `select`/`update` auf fremde Zeilen versuchen und
+  leer/verweigert zurückbekommen müssen) — als nächster Schritt empfohlen, nicht in dieser Sitzung
+  durchgeführt (kein Docker/lokaler Supabase-Stack geprüft, kein Zugriff auf das Produktionsprojekt).
+- Dashboard-Policy-Export (`supabase db dump` oder SQL-Editor `select * from pg_policies`) gegen das
+  tatsächliche Projekt, um schema.sql/schema-v2.sql als aktuell angewendet zu bestätigen — nicht ausgeführt.
+
+### Production-Konfiguration: NICHT gesetzt, NICHT automatisch gesetzt (Nutzerentscheidung: nur Einladung)
+`shouldCreateUser:false` ist nur die CLIENT-Bremse. Die eigentliche Absicherung gehört serverseitig ins
+Supabase-Dashboard und wurde in dieser Sitzung bewusst NICHT verändert (keine Produktionsschreibzugriffe):
+1. **Authentication → Providers → Email → „Allow new users to sign up“ deaktivieren.** Ohne diesen Schalter
+   könnte `signInWithPassword`/ein direkter REST-Call theoretisch weiter Konten anlegen, unabhängig vom
+   Client-Code — die UI-seitige Sperre reicht nicht.
+2. **Konten ausschließlich serveradmin-seitig per Einladung anlegen** (Supabase Admin API
+   `auth.admin.inviteUserByEmail` / Dashboard „Invite user“) — NIEMALS mit dem `service_role`-Key im
+   Browser (steht nicht in `config.js`, darf dort nie stehen).
+3. **Invite-Flow für Passwort-Setzen:** Der bestehende `PASSWORD_RECOVERY`-Screen (`showSetPassword()`)
+   funktioniert unverändert auch für eingeladene Konten, weil Supabase Einladungs- und Recovery-Links über
+   denselben `PASSWORD_RECOVERY`-Auth-Event ausliefert — kein zusätzlicher Code-Pfad nötig, aber nicht gegen
+   ein echtes Invite durchgespielt (keine Produktions-E-Mails in dieser Sitzung verschickt).
+Diese drei Punkte sind **dokumentiert als ausstehend**, nicht stillschweigend vorausgesetzt. Umsetzung
+liegt bei der Eltern-Instanz/Deployment-Verantwortlichen, nicht bei diesem Client-Code.
+
+### Architektur-Vorschlag (NICHT umgesetzt — braucht Entscheidung, bevor er gebaut wird)
+`plan.js` enthält bei einigen Bibliotheksübungen ein `note`-Feld mit Olivers persönlichem Trainingskontext
+(z. B. Schulter-Rückstufung, Knie-Zielwert). Diese Notizen sind Teil der GETEILTEN, globalen Bibliothek —
+jedes neue Konto sähe sie standardmäßig mit, obwohl sie Olivers persönliche Historie sind, nicht eine
+allgemeine Übungsvorgabe. Das ist ein echter Mehrbenutzer-Webfehler, aber keiner, der sich ohne
+Schema-Erweiterung sauber lösen lässt (die Notizen client-seitig zu verstecken würde sie nur verschleiern,
+nicht entfernen). Vorschlag zur Entscheidung durch die Eltern-Instanz, nicht in dieser Sitzung umgesetzt:
+eine neue, additive, RLS-geschützte Tabelle `exercise_notes (user_id, exercise_id, note, updated_at)`, aus
+der `app.js` private Notizen pro Konto lädt; die aktuellen `note`-Felder in `plan.js` würden dann entweder
+entfernt oder zu rein generischen Form-Hinweisen (ohne persönliche Lastangaben) reduziert. Bis zur
+Entscheidung bleiben die Notizen unverändert im Code — bewusst nicht angefasst, um bestehendes Verhalten
+für Oliver nicht zu brechen, während eine Mehrbenutzer-Lösung aussteht.
