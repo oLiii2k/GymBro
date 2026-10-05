@@ -24,7 +24,10 @@ async function bootApp(seedOverride) {
   const run = (code) => window.eval(code);
   run(read("test/mock-supabase.js"));
   run(read("test/test-config.js"));
-  if (seedOverride) window.__GYMBRO_SEED__.accounts = seedOverride;
+  if (seedOverride) {
+    if (seedOverride && seedOverride.accounts) Object.assign(window.__GYMBRO_SEED__, seedOverride);
+    else window.__GYMBRO_SEED__.accounts = seedOverride;
+  }
   // __TEST_SB__: Testzugriff auf den erzeugten Mock-Client (accounts/otpCalls/…), OHNE app.js' privates
   // `sb` anzutasten — app.js bleibt unverändert zur Produktion, der Haken sitzt nur im Test-Bootstrap.
   run(`window.supabase = { createClient: () => (window.__TEST_SB__ = window.__GYMBRO_MOCK__.makeFakeSupabase(window.__GYMBRO_SEED__)) };`);

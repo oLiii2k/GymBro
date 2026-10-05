@@ -268,4 +268,95 @@ Beweis für die echten Postgres-RLS-Policies im Supabase-Projekt. Diese Grenze w
 
 ## v4-Scope (abgegrenzt, nicht Teil von v3)
 - **Persönliche Übungsnotiz pro Nutzer, mit Zeitstempel und auflösbar:** neue Tabelle `exercise_notes (user_id, exercise_id, note, updated_at)`, RLS wie `plans`/`sets`. Ersetzt/ergänzt die generische `note` aus der geteilten Bibliothek um eine individuelle Begründungsebene (z. B. "Rückstufung wegen Schultergefühl, Datum X") — muss aktiv löschbar sein, sonst bremst sie Progression, wenn der Grund längst weg ist. Ausgelöst durch den Privacy-Fix oben (generische Notiz reicht fürs Teilen, aber verliert die persönliche Begründung). Anzeige trägt sichtbar das Datum ("seit 30.09."); sobald die in der Notiz genannte Bedingung erfüllt ist (bei Oliver: zwei unauffällige Einheiten seit `updated_at`, reiner Zähler aus den Sätzen), kippt die gelbe Warnung zu einer blauen Rückfrage "Gilt das noch? · Behalten / Erledigt" — die App löst nichts automatisch auf, sie fragt genau einmal nach.
-- **Aufräumen (kein Feature):** Pixelwerte im `<style>`-Block, die außerhalb der 6er-Abstandsskala liegen (gefunden: 40/20/34/14px, gemeint war 32/24/36/16), auf `var(--s-*)`-Tokens ziehen. Ausnahmen nur für Trefferflächen/feste Maße (46, 56, 88, 392 sind legitim, keine Tokens).
+
+## v4-Umsetzung (2026-10-05) — Status: implementiert, lokal getestet (TDD), NICHT deployed
+
+Persönliche, pro Nutzer UND pro Übung geführte Notizen mit drei abgeleiteten Zuständen:
+**ACTIVE** (gelb, `--warn`/`--warn-bg`) → **REVIEW** (blau, `--surface-2`/`--accent`-Rahmen, "Gilt das
+noch?") → **RESOLVED** (Soft-Resolve, verschwindet aus der aktiven Kärtchen-Ansicht, bleibt gemutet
+(`--fg-muted`) im Notiz-Verlauf derselben Übung). Alle drei Zustände werden **clientseitig** aus den
+Spalten abgeleitet (`logic.js`: `noteStatus`, `sessionsSinceDate`, `activeNoteOf`, `resolvedNotesOf`) —
+serverseitig/DB ist nur `resolved_at` (gesetzt = aufgelöst) eine harte Tatsache.
+
+**Wichtige Klarstellung, kein Automatismus:** Ein abgeschlossenes Training ist KEIN Beweis für
+Symptomfreiheit. Die App löst nie selbst auf; sie zählt nur Trainingstage seit der letzten *inhaltlichen*
+Textänderung der Notiz (`sessionsSinceDate`) und zeigt ab zwei solchen Tagen **einmalig** die neutrale
+Rückfrage "Gilt das noch?". Bleibt sie unbeantwortet, bleibt die Notiz unverändert aktiv/sichtbar — nichts
+wird automatisch deaktiviert oder aufgelöst. "Behalten" persistiert `review_ack_at`, danach wird nicht
+erneut gefragt, bis die Notiz inhaltlich neu bearbeitet wird (das setzt `review_ack_at` serverseitig wieder
+auf `null` und `text_updated_at` auf jetzt). "Erledigt" ist ein reines **UPDATE** (`resolved_at = now()`),
+**niemals ein DELETE** — die Zeile bleibt als private Historie dieser Übung erhalten (Start-/Auflösedatum +
+Originaltext), eine neue aktive Notiz zur selben Übung kann danach angelegt werden; mehrere historische
+Notizen je Übung sind ausdrücklich erlaubt. Ein Hard-Delete-Button existiert in der aktuellen UI nicht; die
+`delete`-RLS-Policy liegt nur als Vorbereitung bereit und ist nicht mit "Erledigt" verknüpft.
+
+**Limitation, bewusst dokumentiert:** Der Sessions-Zähler basiert auf *Trainingstagen* (distinkte Datumswerte
+mit mindestens einem bestätigten ✓-Satz der Übung), nicht auf einzelnen Sätzen — identisch zur bestehenden
+`sessionsFromRows`-Regel aus v3. Mehrere Einheiten am selben Kalendertag zählen weiterhin als eine Session.
+
+### Datenmodell
+- `supabase/schema-v4.sql` (additiv, idempotent, **noch nicht ausgeführt**, siehe unten): Tabelle
+  `exercise_notes(id, user_id, exercise_id, note, created_at, text_updated_at, review_ack_at, resolved_at)`.
+  RLS owner-only (`USING`/`WITH CHECK` auf `user_id = auth.uid()`) in allen vier Policies, Muster identisch
+  zu `plans` in `schema-v2.sql`, Syntax gegen die offizielle Supabase-RLS-Doku geprüft
+  (`supabase.com/docs/guides/auth/row-level-security`). Ein partieller Unique-Index
+  (`where resolved_at is null`) erzwingt höchstens eine aktive Notiz je Nutzer+Übung auf DB-Ebene;
+  aufgelöste (historische) Zeilen sind davon ausdrücklich ausgenommen.
+- Keine Rückwirkung auf `sets`/`plans`: reine additive Migration, keine bestehende Spalte/Tabelle verändert.
+- **Fehlende Migration wird klar behandelt, nicht ignoriert oder vorgetäuscht:** `app.js::loadNotes()` lädt
+  `exercise_notes` bewusst AUSSERHALB des Haupt-`Promise.all` für Sätze/Pläne, in einem eigenen try/catch.
+  Fehlt die Tabelle (Postgres `42P01`) oder tritt ein anderer Fehler auf, zeigt die Übungskarte statt der
+  Notiz-UI einen expliziten Hinweis ("Migration fehlt") — Sätze, Pläne, Login und die restliche App laufen
+  unverändert weiter (Regressionstest: `test/notes.test.js` → "fehlende Migration …").
+- **Rollback:** `supabase/schema-v4-rollback.md`. Default-Pfad ist **Deaktivieren ohne Datenverlust**
+  (Tabelle umbenennen bzw. Migration einfach nicht ausführen — die App degradiert bereits von selbst auf den
+  "Migration fehlt"-Hinweis). Ein destruktives `DROP TABLE` ist dokumentiert, aber ausdrücklich NICHT der
+  Standardweg, weil die Zeilen private, selbst eingetragene Gesundheits-/Trainingsangaben sind.
+
+### UI (`index.html`/`app.js`)
+- Im aufgeklappten Übungs-Kärtchen ("Heute"): ohne aktive Notiz ein gestrichelter "+ Notiz"-Button; mit
+  aktiver Notiz ACTIVE (gelbe Fläche, voller Text, "seit TT.MM.") oder REVIEW (blaue Fläche, **derselbe
+  volle Notiztext bleibt sichtbar**, darunter die Frage "Gilt das noch?", darunter gleich große
+  Behalten-/Erledigt-Schaltflächen, je ≥46px Trefferfläche über `var(--hit-min)` + `flex:1`). Aufgelöste
+  Notizen erscheinen separat darunter als "Notiz-Verlauf": gemutete Zeilen (`--fg-muted`) mit
+  Start–Auflösungsdatum und Originaltext, kein Datum/Text wird erfunden — nur was die Person selbst
+  eingetragen hat.
+- Keine Farbe ist neu hardcodiert: ACTIVE nutzt `--warn`/`--warn-bg` (gleiches Muster wie die bestehende
+  `.note`/`.err`-Klasse), REVIEW nutzt `--surface-2` als Fläche mit `--accent`-Rahmen/-Text (bestehende
+  Token neu kombiniert statt eines neuen "--accent-bg"), RESOLVED nutzt `--fg-muted`.
+
+### Tests (`test/logic.test.js`, `test/notes.test.js`) — echte Tests, keine Mocks der Kernlogik
+`sessionsSinceDate`/`noteStatus`/`noteTextChanged`/`activeNoteOf`/`resolvedNotesOf` sind reine Funktionen
+und laufen **ohne** Mock/DOM direkt in Node (`test/logic.test.js`). Alles, was Supabase braucht, läuft gegen
+jsdom + `test/mock-supabase.js` (RLS-Nachbildung, **kein** echtes Postgres/Supabase-Projekt — siehe die
+bestehende Einschränkung unten). Neu abgedeckt in `test/notes.test.js` (9 Interaktions- + 3 CSS-Tests):
+Anlegen mit sichtbarem Startdatum; Review-Schwelle ab 2 Sessions seit Textänderung; unbeantwortete
+Rückfrage ändert/löst nichts; einmalige "Behalten"-Persistenz übersteht Reload/erneutes Rendern; "Erledigt"
+ist Soft-Resolve und bleibt als Verlaufszeile erhalten (kein DELETE, per `__TEST_SB__.__test.notesOf()`
+gegen den Mock-Datenbestand geprüft); neue Notiz nach Auflösen möglich, alte bleibt unangetastet; zwei
+Konten sehen sich nie gegenseitig (auch nicht nach Kontowechsel im selben Tab); fehlende Migration bricht
+Sätze/Pläne nicht; Notiz-Aktionen verändern nie die gespeicherte Satz-Historie. Die drei CSS-Tests prüfen
+den `<style>`-Block von `index.html` statisch (Regex auf Quelltext, kein Layout-Rendering in jsdom):
+Behalten/Erledigt nutzen `var(--hit-min)` + gleiche Breite, keine rohen px-Werte, die exakt einem
+`--s-*`-Token entsprechen, bleiben übrig, und die legitimen Maße 46/56/88/392px bleiben unangetastet.
+`npm test`: **56/56 grün** (44 zuvor + 12 neu), siehe Ausführung unten.
+
+### CSS-Aufräumen (`index.html`)
+Rohe px-Werte, die exakt einem bestehenden Abstands-Token entsprechen (`--s-1`=4, `--s-2`=8, `--s-3`=12,
+`--s-5`=24), wurden durch die Variable ersetzt (sieben Stellen: Body-Padding, `.themebtn`, `.big svg`,
+`ol.hints li`, `.field .unit`, `.chip`, `.prog-list`). Zusätzlich, bewusst über reine Exakt-Treffer hinaus:
+Body-Padding `20px`/`40px` lagen außerhalb der Skala und wurden auf die nächstliegenden Token `--s-5`(24)/
+`--s-6`(32) gerundet (sichtbarer, aber minimaler Layout-Effekt, siehe Regressionstest `test/notes.test.js`
+→ "CSS: Abstands-Literale …"). **Nicht angetastet**, bewusst: Trefferflächen-/Illustrationsmaße 46/56/88/392
+(Touch-Ziele, `.phone`-Breite, `.stage`-Illustration — Geometrie, keine Abstandsskala) sowie alle
+Schriftgrößen und sonstige rohe px-Werte ohne exakte Token-Entsprechung (z. B. `6px`/`10px`/`2px`
+Mikro-Abstände) — "blind ersetzen" hätte dort das Layout unkontrolliert verschoben.
+
+### Nicht erneut geändert / weiterhin offen (unverändert aus v3, siehe oben)
+Produktions-Auth-Konfiguration (Invite-only), echte Postgres-RLS-Verifikation gegen das Supabase-Projekt und
+ein echter Invite-/Browser-Durchlauf bleiben **weiterhin unverifiziert** — in dieser Sitzung wurde erneut
+KEIN Zugriff auf eine echte Postgres-Instanz oder das Produktionsprojekt genommen, kein Push, keine SQL
+gegen eine echte Datenbank ausgeführt, keine Einladung verschickt. Der Browser-Automatisierungspfad wurde
+auf ausdrückliche Weisung in dieser Sitzung **nicht erneut versucht** (wiederholte Timeouts, keine
+Freigabe für einen erneuten Versuch). "56/56 grün" heißt ausschließlich "gegen den Mock, der RLS
+*nachbildet*, bestanden" — kein Beweis für die echten Postgres-RLS-Policies im Supabase-Projekt.

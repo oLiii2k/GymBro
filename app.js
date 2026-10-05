@@ -42,8 +42,8 @@
   // Zurückkommen verworfen statt ins falsche Konto geschrieben zu werden — das ist der eigentliche Schutz,
   // RLS in Postgres ist die zweite, serverseitige Schicht (siehe supabase/schema.sql, schema-v2.sql).
   let sb, data = null, st = {}, activeId = null, tab = "uebersicht", openId = null, form = null, progressExId = null, recoveryMode = false;
-  let gen = 0, currentUserId = null, currentEmail = null;
-  function resetState() { data = null; st = {}; activeId = null; tab = "uebersicht"; openId = null; form = null; progressExId = null; currentUserId = null; currentEmail = null; }
+  let gen = 0, currentUserId = null, currentEmail = null, noteEditId = null;
+  function resetState() { data = null; st = {}; activeId = null; tab = "uebersicht"; openId = null; form = null; progressExId = null; currentUserId = null; currentEmail = null; noteEditId = null; }
   const mult = LOGIC.mult, vol = LOGIC.vol;
   const plan = (id) => data.plans.find((p) => p.id === id);
   const planSets = (p) => p.exs.reduce((a, e) => a + e.sets, 0);
@@ -165,7 +165,25 @@
     // p.exercises kann bei einer kaputten/fremden DB-Zeile fehlen oder kein Array sein — dann leerer Plan statt Crash.
     const plans = raw.slice(0, MAX_PLANS).map((p, i) => ({ ...p, id: p.builtin ? LABELS[i] : p.id, label: LABELS[i], exs: (Array.isArray(p.exercises) ? p.exercises : []).map(resolve).filter(Boolean) }));
     if (myGen !== gen) return; // währenddessen abgemeldet / Konto gewechselt — Ergebnis gehört nicht mehr hierher
-    data = { plans, rows: rw.data, lastBy, progress: data ? data.progress : null };
+    data = { plans, rows: rw.data, lastBy, progress: data ? data.progress : null, notes: data ? data.notes : [], notesError: data ? data.notesError : null };
+    await loadNotes(myGen);
+  }
+
+  // ---------- v4: persönliche Übungsnotizen (RLS-geschützt, additive Tabelle exercise_notes) ----------
+  // Bewusst NICHT Teil des Haupt-Promise.all oben: ein fehlendes exercise_notes (Migration supabase/schema-v4.sql
+  // noch nicht ausgeführt) darf Sätze/Pläne/Login niemals mitreissen — nur der Notiz-Teil degradiert, klar benannt.
+  async function loadNotes(myGen) {
+    myGen = myGen === undefined ? gen : myGen;
+    try {
+      const { data: rows, error } = await sb.from("exercise_notes")
+        .select("id,exercise_id,note,text_updated_at,review_ack_at,resolved_at").order("text_updated_at");
+      if (myGen !== gen || !data) return;
+      if (error) { data.notes = []; data.notesError = error.message; return; }
+      data.notes = rows || []; data.notesError = null;
+    } catch (err) {
+      if (myGen !== gen || !data) return;
+      data.notes = []; data.notesError = (err && err.message) || String(err);
+    }
   }
 
   async function loadProgress() {
@@ -499,7 +517,54 @@
       <h4>Sätze eintragen · <em>Ziel ${target}</em></h4>${rows}
       <div class="hintline">${hint} Orange = außerhalb der Plan-Spanne — markiert, nicht bewertet. Ein Satz zählt erst mit ✓.</div>
       <button class="allbtn">Alle ${e.sets} wie geplant ✓ &nbsp;${e.wMax}${isSec ? " s" : ` @ ${e.pair ? "2×" : ""}${fmtW(e.kg)} kg`}</button>
-      ${e.note ? `<div class="note">${e.note}</div>` : ""}</div>`;
+      ${e.note ? `<div class="note">${e.note}</div>` : ""}${renderNoteBlock(e)}</div>`;
+  }
+
+  // ---------- v4: persönliche Übungsnotizen — ACTIVE/REVIEW/RESOLVED (siehe logic.js) ----------
+  function noteFormHtml(e, existing) {
+    const val = existing ? existing.note : "";
+    return `<div class="xnote-form" data-note-form="${e.id}">
+      <textarea class="xnote-ta" id="noteta-${e.id}" maxlength="2000" placeholder="Eigene Notiz zu ${esc(e.name)} …">${esc(val)}</textarea>
+      <div class="xnote-formrow">
+        <button class="xnote-save" data-save-note="${e.id}" data-note-id="${existing ? existing.id : ""}">Speichern</button>
+        <button class="xnote-cancel" data-cancel-note="${e.id}">Abbrechen</button></div></div>`;
+  }
+  function noteHistoryHtml(e) {
+    const hist = LOGIC.resolvedNotesOf(data.notes || [], e.id);
+    if (!hist.length) return "";
+    return `<div class="xnote-hist"><h4>Notiz-Verlauf</h4>${hist.map((n) => `<div class="xnote-row">
+      <div class="xnote-row-dates">${shortDate(n.text_updated_at.slice(0, 10))}–${shortDate(n.resolved_at.slice(0, 10))}</div>
+      <div class="xnote-row-text">${esc(n.note)}</div></div>`).join("")}</div>`;
+  }
+  // Trainingsabschluss beweist NICHT Symptomfreiheit — kein automatisches Auflösen, nur EINE Rückfrage
+  // (noteStatus/sessionsSinceDate, siehe logic.js). Bei fehlender Migration (data.notesError) klarer Hinweis
+  // statt stillschweigend leerer/erfundener Notiz-UI.
+  function renderNoteBlock(e) {
+    if (data.notesError) return `<div class="hintline">Eigene Notizen aktuell nicht verfügbar (Migration <b>supabase/schema-v4.sql</b> fehlt oder Fehler: ${esc(data.notesError)}).</div>`;
+    const editing = noteEditId === e.id;
+    const active = LOGIC.activeNoteOf(data.notes || [], e.id);
+    let block = "";
+    if (editing) {
+      block += noteFormHtml(e, active);
+    } else if (active) {
+      const since = shortDate(active.text_updated_at.slice(0, 10));
+      const sessionsSince = LOGIC.sessionsSinceDate(data.rows, e.id, active.text_updated_at.slice(0, 10));
+      const status = LOGIC.noteStatus(active, sessionsSince);
+      if (status === "review") {
+        block += `<div class="xnote review"><div class="xnote-text">${esc(active.note)}</div>
+          <div class="xnote-meta">seit ${since}</div><div class="xnote-q">Gilt das noch?</div>
+          <div class="xnote-actions"><button class="xnote-keep" data-keep="${active.id}">Behalten</button>
+          <button class="xnote-done" data-done="${active.id}">Erledigt</button></div></div>`;
+      } else {
+        block += `<div class="xnote active"><div class="xnote-text">${esc(active.note)}</div>
+          <div class="xnote-meta">seit ${since}</div>
+          <div class="xnote-actions"><button class="xnote-edit" data-edit-note="${e.id}">Bearbeiten</button>
+          <button class="xnote-done" data-done="${active.id}">Erledigt</button></div></div>`;
+      }
+    } else {
+      block += `<button class="xnote-add" data-add-note="${e.id}">+ Notiz</button>`;
+    }
+    return block + noteHistoryHtml(e);
   }
   // Tempo-Text wie "2-1-2" (Sekunden je Phase) in eine CSS-Animationsdauer übersetzen; "halten" (z. B. Plank) = 2.4s Standard-Loop.
   function tempoSeconds(tempo) {
@@ -508,9 +573,62 @@
     return parts.length ? parts.reduce((a, b) => a + b, 0) : 2.4;
   }
 
+  // ---------- v4: persönliche Übungsnotizen — Klick-Wiring (Create/Edit/Behalten/Erledigt) ----------
+  // Jede Mutation lädt exercise_notes über loadNotes() NEU statt lokal zu patchen: eine einzige Quelle der
+  // Wahrheit (wie bei mutate() für Sätze), vermeidet Drift zwischen UI-Annahme und echtem Serverstand.
+  function wireNotes() {
+    app.querySelectorAll("[data-add-note]").forEach((b) => b.onclick = () => { noteEditId = b.dataset.addNote; render(); });
+    app.querySelectorAll("[data-edit-note]").forEach((b) => b.onclick = () => { noteEditId = b.dataset.editNote; render(); });
+    app.querySelectorAll("[data-cancel-note]").forEach((b) => b.onclick = () => { noteEditId = null; render(); });
+    app.querySelectorAll("[data-save-note]").forEach((b) => b.onclick = async () => {
+      const exId = b.dataset.saveNote, noteId = b.dataset.noteId || null;
+      const ta = $("#noteta-" + exId); const val = (ta.value || "").trim();
+      if (!val) { toast("Bitte Text eingeben."); return; }
+      const myGen = gen;
+      const existing = noteId ? (data.notes || []).find((n) => n.id === noteId) : null;
+      const now = new Date().toISOString();
+      let err;
+      if (existing) {
+        // Nur eine INHALTLICHE Änderung bumpt text_updated_at und setzt die Review-Berechtigung zurück
+        // (review_ack_at=null) — reines erneutes Speichern desselben Texts darf den Zähler nicht neu starten.
+        const changed = LOGIC.noteTextChanged(existing.note, val);
+        const patch = changed ? { note: val, text_updated_at: now, review_ack_at: null } : { note: val };
+        ({ error: err } = await sb.from("exercise_notes").update(patch).eq("id", noteId));
+      } else {
+        ({ error: err } = await sb.from("exercise_notes").insert({ exercise_id: exId, note: val, text_updated_at: now, review_ack_at: null, resolved_at: null }));
+      }
+      if (myGen !== gen) return;
+      if (err) { toast("Notiz nicht gespeichert: " + err.message); return; }
+      noteEditId = null;
+      await loadNotes(myGen);
+      if (myGen !== gen) return;
+      render();
+    });
+    app.querySelectorAll("[data-keep]").forEach((b) => b.onclick = async () => {
+      const myGen = gen;
+      const { error } = await sb.from("exercise_notes").update({ review_ack_at: new Date().toISOString() }).eq("id", b.dataset.keep);
+      if (myGen !== gen) return;
+      if (error) { toast("Nicht gespeichert: " + error.message); return; }
+      await loadNotes(myGen);
+      if (myGen !== gen) return;
+      render();
+    });
+    app.querySelectorAll("[data-done]").forEach((b) => b.onclick = async () => {
+      // Erledigt = Soft-Resolve (resolved_at setzen). NIE ein DELETE — die Zeile bleibt als Verlauf erhalten.
+      const myGen = gen;
+      const { error } = await sb.from("exercise_notes").update({ resolved_at: new Date().toISOString() }).eq("id", b.dataset.done);
+      if (myGen !== gen) return;
+      if (error) { toast("Nicht gespeichert: " + error.message); return; }
+      await loadNotes(myGen);
+      if (myGen !== gen) return;
+      render();
+    });
+  }
+
   function wireHeute(p) {
     $("#out").onclick = () => sb.auth.signOut();
     app.querySelectorAll(".head").forEach((h) => h.onclick = () => { const id = h.closest(".row").dataset.ex; openId = openId === id ? null : id; render(); });
+    wireNotes();
     app.querySelectorAll("[data-zoom]").forEach((s) => s.onclick = () => { $("#bigsvg").innerHTML = FIG[s.dataset.zoom]; $("#bigsvg").classList.add("anim"); $("#bigsvg").style.setProperty("--demo-loop", s.style.getPropertyValue("--demo-loop")); $("#big").classList.add("on"); });
     app.querySelectorAll(".row.open").forEach((row) => {
       const e = p.exs.find((x) => x.id === row.dataset.ex);

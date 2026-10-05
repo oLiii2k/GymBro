@@ -17,6 +17,11 @@
       a.email = email;
       a.plans = (a.plans || []).map((p, i) => ({ ...p, id: p.id || email + "-plan-" + i, user_id: a.userId, created_at: p.created_at || new Date(2026, 0, i + 1).toISOString() }));
       a.sets = (a.sets || []).map((s) => ({ ...s, user_id: a.userId }));
+      // v4: exercise_notes je Konto. notesTableMissing simuliert ein Projekt, in dem supabase/schema-v4.sql
+      // noch NICHT ausgeführt wurde (Postgres-Fehler "relation does not exist") — testet, dass app.js den
+      // Rest der App (Sätze/Pläne) davon unberührt lädt.
+      a.notes = (a.notes || []).map((n, i) => ({ id: n.id || email + "-note-" + i, user_id: a.userId, ...n }));
+      a.notesTableMissing = !!seed.notesTableMissing && (seed.notesTableMissing === true || seed.notesTableMissing === email);
     });
     let session = seed.session || null; // {user:{id,email}} oder null = ausgeloggt
     const listeners = [];
@@ -51,8 +56,18 @@
         then(resolve) { return resolve(run()); } // macht die Kette awaitbar, ohne echtes Promise-Thenable-Risiko
       };
       // RLS-Kern: ohne Session oder Konto -> immer leer, NIE Daten eines anderen/keines Kontos.
-      function rowsOf() { const a = accountForSession(); if (!a) return []; return table === "plans" ? a.plans : a.sets; }
+      function rowsOf() {
+        const a = accountForSession(); if (!a) return [];
+        if (table === "plans") return a.plans;
+        if (table === "exercise_notes") return a.notes;
+        return a.sets;
+      }
+      function missingTable() {
+        const a = accountForSession();
+        return table === "exercise_notes" && a && a.notesTableMissing;
+      }
       function run() {
+        if (missingTable()) return { data: null, error: { message: 'relation "public.exercise_notes" does not exist', code: "42P01" } };
         let rows = rowsOf().filter((r) => matchesFilters(r, state.filters));
         // Mehrfach-.order() muss wie SQL ORDER BY a,b wirken: zuerst zuletzt angegebene (am wenigsten
         // signifikante) Spalte sortieren, dann rückwärts bis zur ersten — Array.sort ist stabil, das reicht.
@@ -68,6 +83,11 @@
       api.insert = (row) => {
         const a = accountForSession();
         if (!a) return Promise.resolve({ data: null, error: { message: "not authenticated" } });
+        if (missingTable()) return Promise.resolve({ data: null, error: { message: 'relation "public.exercise_notes" does not exist', code: "42P01" } });
+        if (table === "exercise_notes") {
+          const rec = { ...row, id: "note-" + (a.notes.length + 1) + "-" + a.userId, user_id: a.userId };
+          a.notes.push(rec); return Promise.resolve({ data: [rec], error: null });
+        }
         const rec = { ...row, id: "plan-" + (a.plans.length + 1) + "-" + a.userId, user_id: a.userId, created_at: new Date().toISOString() };
         a.plans.push(rec); return Promise.resolve({ data: [rec], error: null });
       };
@@ -75,8 +95,10 @@
         eq(col, val) {
           const a = accountForSession();
           if (!a) return Promise.resolve({ data: null, error: { message: "not authenticated" } });
+          if (missingTable()) return Promise.resolve({ data: null, error: { message: 'relation "public.exercise_notes" does not exist', code: "42P01" } });
           // WITH CHECK-Analogon: nur Zeilen DIESES Kontos werden getroffen, nie fremde — selbst wenn die
           // aufrufende Seite (irrtümlich) eine fremde ID übergibt, bleibt sie unverändert (vgl. echte RLS).
+          if (table === "exercise_notes") { a.notes = a.notes.map((n) => (n[col] === val ? { ...n, ...patch, user_id: a.userId } : n)); return Promise.resolve({ data: null, error: null }); }
           a.plans = a.plans.map((p) => (p[col] === val ? { ...p, ...patch, user_id: a.userId } : p));
           return Promise.resolve({ data: null, error: null });
         }
@@ -88,7 +110,12 @@
           then(resolve) {
             const doDelete = () => {
               const a = accountForSession();
-              if (a) { if (table === "plans") a.plans = a.plans.filter((p) => !matchesFilters(p, delState.filters)); else a.sets = a.sets.filter((r) => !matchesFilters(r, delState.filters)); }
+              if (missingTable()) return { data: null, error: { message: 'relation "public.exercise_notes" does not exist', code: "42P01" } };
+              if (a) {
+                if (table === "plans") a.plans = a.plans.filter((p) => !matchesFilters(p, delState.filters));
+                else if (table === "exercise_notes") a.notes = a.notes.filter((n) => !matchesFilters(n, delState.filters));
+                else a.sets = a.sets.filter((r) => !matchesFilters(r, delState.filters));
+              }
               return { data: null, error: null };
             };
             return (table === "sets" ? throughGate(doDelete) : Promise.resolve(doDelete())).then(resolve);
@@ -136,6 +163,7 @@
         get accounts() { return accounts; },
         get plansOf() { return (email) => (accounts[email] ? accounts[email].plans : []); },
         get setsOf() { return (email) => (accounts[email] ? accounts[email].sets : []); },
+        get notesOf() { return (email) => (accounts[email] ? accounts[email].notes : []); },
         get otpCalls() { return otpCalls; },
         setSession: (s) => { session = s; }, fire,
         gateWrites, forceNextWriteError

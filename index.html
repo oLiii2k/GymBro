@@ -9,11 +9,11 @@
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
        background:var(--bg);color:var(--fg);line-height:1.45;
-       display:flex;justify-content:center;padding:20px 12px 40px;min-height:100vh}
+       display:flex;justify-content:center;padding:var(--s-5) var(--s-3) var(--s-6);min-height:100vh}
   .phone{width:392px;background:var(--surface);border:1px solid var(--line);
          border-radius:var(--r-lg);overflow:hidden;display:flex;flex-direction:column;box-shadow:var(--shadow)}
   .themebtn{position:fixed;top:12px;right:16px;z-index:9;background:var(--surface);color:var(--fg);
-    border:1px solid var(--line-strong);border-radius:var(--r-sm);height:34px;padding:0 12px;
+    border:1px solid var(--line-strong);border-radius:var(--r-sm);height:34px;padding:0 var(--s-3);
     font-size:13px;font-weight:600;cursor:pointer}
 
   header{padding:var(--s-4) var(--s-4) var(--s-3);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:flex-start;gap:var(--s-3)}
@@ -69,13 +69,13 @@
   }
   .big{position:fixed;inset:0;background:rgba(5,8,11,.86);display:none;place-items:center;z-index:20}
   .big.on{display:grid}
-  .big svg{width:min(78vw,340px);height:auto;background:var(--surface);border-radius:18px;padding:12px}
+  .big svg{width:min(78vw,340px);height:auto;background:var(--surface);border-radius:18px;padding:var(--s-3)}
 
   h4{font:var(--t-label);letter-spacing:.08em;text-transform:uppercase;color:var(--fg-muted);
      margin:var(--s-4) 0 var(--s-2)}
   h4 em{font-style:normal;text-transform:none;letter-spacing:0;font-weight:600}
   ol.hints{list-style:none;counter-reset:h}
-  ol.hints li{counter-increment:h;position:relative;padding-left:24px;font:var(--t-body);margin-bottom:6px}
+  ol.hints li{counter-increment:h;position:relative;padding-left:var(--s-5);font:var(--t-body);margin-bottom:6px}
   ol.hints li::before{content:counter(h);position:absolute;left:0;top:2px;width:17px;height:17px;border-radius:50%;
     background:var(--surface-2);border:1px solid var(--line-strong);color:var(--fg-muted);
     font-size:10.5px;font-weight:700;display:grid;place-items:center}
@@ -91,7 +91,7 @@
   .field button:active{background:var(--surface-2);color:var(--fg)}
   .field .val{flex:1;text-align:right;font-variant-numeric:tabular-nums;font-size:15px;font-weight:700;
               transition:color var(--dur-fast) var(--ease)}
-  .field .unit{font-size:11px;color:var(--fg-muted);font-weight:600;padding:0 6px 0 4px}
+  .field .unit{font-size:11px;color:var(--fg-muted);font-weight:600;padding:0 6px 0 var(--s-1)}
   .field.devmark{border-color:var(--warn)}
   .field.devmark .val{color:var(--warn)}
   .done{width:var(--hit-min);height:var(--hit-min);border-radius:var(--r-sm);border:1px solid var(--line-strong);
@@ -155,7 +155,7 @@
   .label{font:var(--t-label);letter-spacing:.08em;text-transform:uppercase;color:var(--fg-muted)}
   .ctitle{font:var(--t-item);margin-top:var(--s-1)}
   .card .save{margin-top:var(--s-3)}
-  .chip{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:999px;background:var(--surface-2);
+  .chip{display:inline-block;font-size:11px;font-weight:700;padding:1px var(--s-2);border-radius:999px;background:var(--surface-2);
     color:var(--accent);border:1px solid var(--accent);vertical-align:1px}
   .hrow{display:flex;justify-content:space-between;align-items:center;gap:var(--s-3);min-height:var(--hit-row);border-bottom:1px solid var(--line)}
   .hval{font:var(--t-num);font-size:14px;font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--fg-muted)}
@@ -192,8 +192,35 @@
 
   /* ---------- v3: Fortschritt ---------- */
   .prow-ex{padding:var(--s-3) 0;border-bottom:1px solid var(--line)}
-  .prog-list{margin-top:var(--s-2);display:flex;flex-direction:column;gap:4px}
+  .prog-list{margin-top:var(--s-2);display:flex;flex-direction:column;gap:var(--s-1)}
   .progrow{font:var(--t-meta);color:var(--fg);font-variant-numeric:tabular-nums;padding:2px 0}
+
+  /* ---------- v4: persönliche Übungsnotizen — ACTIVE (gelb) / REVIEW (blau) / RESOLVED (gemutete Historie) ---------- */
+  .xnote{margin-top:var(--s-3);border-radius:var(--r-md);padding:var(--s-3)}
+  .xnote.active{background:var(--warn-bg);border:1px solid var(--warn)}
+  .xnote.review{background:var(--surface-2);border:1px solid var(--accent)} /* blaue Rückfrage: Rahmen in --accent, kein neues Hardcoded-Blau */
+  .xnote-text{font:var(--t-body);color:var(--fg);white-space:pre-wrap}
+  .xnote-meta{font:var(--t-meta);color:var(--fg-muted);margin-top:var(--s-1)}
+  .xnote-q{font:var(--t-item);color:var(--accent);margin-top:var(--s-2)}
+  .xnote-actions{display:flex;gap:var(--s-2);margin-top:var(--s-2)}
+  .xnote-keep,.xnote-done{min-height:var(--hit-min);flex:1;border-radius:var(--r-sm);font-size:14px;font-weight:700;cursor:pointer}
+  .xnote-keep{border:1px solid var(--accent);background:transparent;color:var(--accent)}
+  .xnote-done{border:1px solid var(--line-strong);background:transparent;color:var(--fg-muted)}
+  .xnote-edit{min-height:var(--hit-min);border:1px solid var(--line-strong);border-radius:var(--r-sm);
+    background:transparent;color:var(--fg-muted);font-size:13px;font-weight:700;cursor:pointer;padding:0 var(--s-3)}
+  .xnote-add{width:100%;min-height:var(--hit-min);margin-top:var(--s-3);border:1.5px dashed var(--line-strong);
+    border-radius:var(--r-md);background:transparent;color:var(--accent);font-size:14px;font-weight:700;cursor:pointer}
+  .xnote-form{margin-top:var(--s-3)}
+  .xnote-ta{width:100%;min-height:72px;border:1px solid var(--line-strong);border-radius:var(--r-sm);
+    background:var(--surface-2);color:var(--fg);font-size:14.5px;padding:var(--s-2) var(--s-3);resize:vertical}
+  .xnote-formrow{display:flex;gap:var(--s-2);margin-top:var(--s-2)}
+  .xnote-save,.xnote-cancel{flex:1;min-height:var(--hit-min);border-radius:var(--r-sm);font-size:14px;font-weight:700;cursor:pointer}
+  .xnote-save{border:none;background:var(--accent);color:var(--on-accent)}
+  .xnote-cancel{border:1px solid var(--line-strong);background:transparent;color:var(--fg-muted)}
+  .xnote-hist{margin-top:var(--s-3)}
+  .xnote-row{padding:var(--s-2) 0;border-bottom:1px solid var(--line)}
+  .xnote-row-dates{font:var(--t-meta);color:var(--fg-muted)}
+  .xnote-row-text{font:var(--t-body);color:var(--fg-muted);margin-top:2px}
 </style>
 </head>
 <body>

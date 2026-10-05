@@ -51,7 +51,51 @@
     return (i + 1) % planIds.length; // i === -1 → 0
   }
 
-  const api = { mult, vol, sessionsFromRows, suggestFromLast, dranIndex };
+  // ---------- v4: persönliche Übungsnotizen (pro Nutzer, pro Übung) ----------
+  // Sessions seit einem Stichtag (Textänderung der Notiz) — dieselbe Datums-Zählung wie sessionsFromRows,
+  // nur mit einem Vorfilter "date > sinceDate". STRIKT grösser: der Stichtag selbst (Tag der Änderung)
+  // zählt nicht mehr mit, sonst würde eine am selben Tag noch nachgetragene Einheit doppelt zählen.
+  // Limitation (dokumentiert, siehe README): zählt distinkte TRAININGSTAGE, nicht Sätze — wie sessionsFromRows.
+  function sessionsSinceDate(rows, exerciseId, sinceDate) {
+    const filtered = sinceDate ? rows.filter((r) => r.date > sinceDate) : rows;
+    return sessionsFromRows(filtered, exerciseId).count;
+  }
+
+  // Drei Zustände (Mira, UI-Design): "active" (gelb), "review" (blau, "Gilt das noch?"), "resolved" (aus der
+  // aktiven Karte raus, nur noch Historie). Trainingsabschluss beweist NICHT Symptomfreiheit — die App löst
+  // nichts automatisch auf, sie fragt nach GENAU EINEM Schwellwert (>=2 Sessions seit der letzten Textänderung)
+  // GENAU EINMAL (review_ack_at persistiert "Behalten", danach bleibt es "active", keine erneute Rückfrage).
+  function noteStatus(note, sessionsSinceEdit) {
+    if (!note) return null;
+    if (note.resolved_at) return "resolved";
+    if ((sessionsSinceEdit || 0) >= 2 && !note.review_ack_at) return "review";
+    return "active";
+  }
+
+  // Nur eine inhaltliche (getrimmte) Änderung zählt als "meaningful edit" — reines Whitespace-Antippen darf
+  // die Review-Berechtigung/den Zähler nicht zurücksetzen.
+  function noteTextChanged(oldText, newText) {
+    return String(oldText || "").trim() !== String(newText || "").trim();
+  }
+
+  // Owner-seitig bereits vorgefiltert (RLS/Mock) — hier nur noch je Übung bündeln. Max. 1 aktive Notiz je
+  // Übung ist das Ziel (DB: partial unique index), aber defensiv: bei mehreren nicht aufgelösten Zeilen
+  // (z. B. Edge-Case/Race) gewinnt die zuletzt bearbeitete.
+  function activeNoteOf(notes, exerciseId) {
+    const cand = (notes || []).filter((n) => n.exercise_id === exerciseId && !n.resolved_at);
+    if (!cand.length) return null;
+    return cand.slice().sort((a, b) => (a.text_updated_at < b.text_updated_at ? 1 : -1))[0];
+  }
+
+  // Aufgelöste Notizen bleiben erhalten (Soft-Resolve, kein Delete) — mehrere historische Einträge je Übung
+  // sind erlaubt und erwünscht (jede Rückstufungsrunde bleibt nachvollziehbar), neueste zuerst.
+  function resolvedNotesOf(notes, exerciseId) {
+    return (notes || []).filter((n) => n.exercise_id === exerciseId && n.resolved_at)
+      .slice().sort((a, b) => (a.resolved_at < b.resolved_at ? 1 : -1));
+  }
+
+  const api = { mult, vol, sessionsFromRows, suggestFromLast, dranIndex,
+    sessionsSinceDate, noteStatus, noteTextChanged, activeNoteOf, resolvedNotesOf };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.GYMBRO_LOGIC = api;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -123,3 +123,70 @@ test("sessionsFromRows: zwei ECHTE Sessions an verschiedenen Tagen, je anderer P
   assert.equal(r.count, 2);
   assert.deepEqual(r.sessions.map((s) => s.date), ["2026-10-01", "2026-10-08"]);
 });
+
+// ---- v4: persönliche Übungsnotizen — Status/Zähl-Logik (reine Funktionen) ----
+test("sessionsSinceDate: zählt nur Sessions NACH dem Stichtag (Textänderung der Notiz), nicht davor", () => {
+  const rows = [
+    { date: "2026-09-01", exercise: "kh-schulterdruecken", set_index: 1, reps: 8, weight: 10 }, // vor der Notiz-Änderung
+    { date: "2026-10-01", exercise: "kh-schulterdruecken", set_index: 1, reps: 8, weight: 10 },
+    { date: "2026-10-08", exercise: "kh-schulterdruecken", set_index: 1, reps: 8, weight: 10 }
+  ];
+  assert.equal(L.sessionsSinceDate(rows, "kh-schulterdruecken", "2026-09-15"), 2);
+  assert.equal(L.sessionsSinceDate(rows, "kh-schulterdruecken", "2026-10-01"), 1, "der Stichtag selbst zählt nicht mehr mit (strikt NACH)");
+});
+
+test("sessionsSinceDate: ohne Stichtag (null) -> verhält sich wie normale Session-Zählung", () => {
+  const rows = [{ date: "2026-10-01", exercise: "plank", set_index: 1, reps: 30, weight: 0 }];
+  assert.equal(L.sessionsSinceDate(rows, "plank", null), 1);
+});
+
+test("noteStatus: aktive, frische Notiz (<2 Sessions seit Änderung) -> 'active'", () => {
+  assert.equal(L.noteStatus({ note: "x", resolved_at: null, review_ack_at: null }, 0), "active");
+  assert.equal(L.noteStatus({ note: "x", resolved_at: null, review_ack_at: null }, 1), "active");
+});
+
+test("noteStatus: >=2 Sessions seit Änderung UND noch nie bestätigt -> 'review' (einmalige Rückfrage)", () => {
+  assert.equal(L.noteStatus({ note: "x", resolved_at: null, review_ack_at: null }, 2), "review");
+  assert.equal(L.noteStatus({ note: "x", resolved_at: null, review_ack_at: null }, 5), "review");
+});
+
+test("noteStatus: bereits per 'Behalten' bestätigt -> bleibt 'active', fragt NICHT erneut, obwohl weiter >=2 Sessions", () => {
+  assert.equal(L.noteStatus({ note: "x", resolved_at: null, review_ack_at: "2026-10-05T10:00:00Z" }, 9), "active");
+});
+
+test("noteStatus: resolved_at gesetzt -> immer 'resolved', unabhängig von Sessions/Bestätigung", () => {
+  assert.equal(L.noteStatus({ note: "x", resolved_at: "2026-10-05T10:00:00Z", review_ack_at: null }, 9), "resolved");
+});
+
+test("noteTextChanged: erkennt eine inhaltliche Änderung (trim, nicht nur Whitespace) -> true, sonst false", () => {
+  assert.equal(L.noteTextChanged("Rückstufung wegen Schulter", "Rückstufung wegen Schulter"), false);
+  assert.equal(L.noteTextChanged("Rückstufung wegen Schulter", "  Rückstufung wegen Schulter  "), false, "nur umgebendes Leerzeichen ist KEINE inhaltliche Änderung");
+  assert.equal(L.noteTextChanged("Rückstufung wegen Schulter", "Rückstufung wegen Knie"), true);
+});
+
+test("activeNoteOf: findet die eine nicht-aufgelöste Notiz je Übung, ignoriert aufgelöste und andere Übungen", () => {
+  const notes = [
+    { exercise_id: "plank", note: "alt, aufgelöst", resolved_at: "2026-09-01T00:00:00Z", text_updated_at: "2026-08-01T00:00:00Z" },
+    { exercise_id: "plank", note: "aktuell aktiv", resolved_at: null, text_updated_at: "2026-09-10T00:00:00Z" },
+    { exercise_id: "andere-uebung", note: "fremd", resolved_at: null, text_updated_at: "2026-09-10T00:00:00Z" }
+  ];
+  const n = L.activeNoteOf(notes, "plank");
+  assert.equal(n.note, "aktuell aktiv");
+});
+
+test("activeNoteOf: keine aktive Notiz vorhanden -> null", () => {
+  assert.equal(L.activeNoteOf([{ exercise_id: "plank", note: "x", resolved_at: "2026-01-01T00:00:00Z" }], "plank"), null);
+  assert.equal(L.activeNoteOf([], "plank"), null);
+});
+
+test("resolvedNotesOf: liefert alle aufgelösten Notizen EINER Übung, neueste zuerst — mehrere historische Notizen je Übung bleiben erhalten", () => {
+  const notes = [
+    { exercise_id: "plank", note: "erste Rückstufung", resolved_at: "2026-06-01T00:00:00Z" },
+    { exercise_id: "plank", note: "zweite Rückstufung", resolved_at: "2026-09-01T00:00:00Z" },
+    { exercise_id: "plank", note: "aktuell aktiv", resolved_at: null },
+    { exercise_id: "andere-uebung", note: "fremd, aufgelöst", resolved_at: "2026-07-01T00:00:00Z" }
+  ];
+  const r = L.resolvedNotesOf(notes, "plank");
+  assert.equal(r.length, 2);
+  assert.deepEqual(r.map((n) => n.note), ["zweite Rückstufung", "erste Rückstufung"]);
+});
